@@ -78,6 +78,7 @@ function makeFixture(withSetsid: boolean): { root: string; path: string } {
   mkdirSync(join(root, 'bin'), { recursive: true });
   copyFileSync(join(repoRoot, 'scripts/test-env-up.sh'), join(root, 'scripts/test-env-up.sh'));
   copyFileSync(join(repoRoot, 'scripts/test-env-down.sh'), join(root, 'scripts/test-env-down.sh'));
+  copyFileSync(join(repoRoot, 'scripts/test-env-windows.mjs'), join(root, 'scripts/test-env-windows.mjs'));
   writeFileSync(join(root, 'docs/testing/agent-browser.md'), '# test provider\n');
   writeFileSync(join(root, 'package.json'), '{"private":true}\n');
   writeFileSync(join(root, 'package-lock.json'), '{}\n');

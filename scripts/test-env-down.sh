@@ -50,14 +50,16 @@ HELPER="$SCRIPT_DIR/test-env-windows.mjs"
 
 # Only ever stop what this repo started; safe to run twice.
 if [ "$ON_WINDOWS" = 1 ]; then
-  if [ -n "$pid" ] && node "$HELPER" alive "$pid" "$pid_started" 2>/dev/null; then
-    log "stopping xezar (pid $pid)"
-    # Exactly that process and the processes it started, each killed by its start time — never
-    # by image name or pattern, and never taskkill /T. The helper waits until it is gone.
-    node "$HELPER" stop "$pid" "$pid_started" || log "could not stop pid $pid"
-  else
-    log "app is already stopped"
-  fi
+  # Exactly that process and the processes it started, each killed by its start time — never by
+  # image name or pattern, and never taskkill /T. One call checks and stops (each costs a
+  # PowerShell start), and it answers `gone` when the pid no longer names that process.
+  state=""
+  [ -z "$pid" ] || state=$(node "$HELPER" stop "$pid" "$pid_started" || echo failed)
+  case "$state" in
+    stopped) log "stopped xezar (pid $pid)" ;;
+    failed|running) log "could not stop pid $pid" ;;
+    *) log "app is already stopped" ;;
+  esac
 elif [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
   log "stopping xezar (pid $pid)"
   kill "$pid" 2>/dev/null || true

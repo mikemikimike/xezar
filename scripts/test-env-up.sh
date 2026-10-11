@@ -218,7 +218,7 @@ app_alive() {
 # Windows only: end exactly this Windows pid – while it is still the process that started at $2 –
 # and the processes it started, each killed by its start time. Never by image name or pattern.
 stop_windows_pid() {
-  node "$SCRIPT_DIR/test-env-windows.mjs" stop "$1" "${2:-}" || log "could not stop pid $1"
+  node "$SCRIPT_DIR/test-env-windows.mjs" stop "$1" "${2:-}" >/dev/null || log "could not stop pid $1"
 }
 
 http_ok() { curl -fsS --max-time 5 "$1" >/dev/null 2>&1; }
@@ -349,15 +349,17 @@ teardown_stale() {
   pid_started=$(json_get "$ENV_DESCRIPTOR" app.processStartedAt)
   own=$(json_get "$ENV_DESCRIPTOR" startedByThisRepo)
   # Only ever kill what this repo started.
-  if [ -n "$pid" ] && [ "$own" = true ] && app_alive "$pid" "$pid_started"; then
-    log "stopping stale instance (pid $pid)"
-    if [ "$ON_WINDOWS" = 1 ]; then
+  if [ "$ON_WINDOWS" = 1 ]; then
+    # One call checks and stops: it ends nothing unless the pid still names the recorded process.
+    if [ -n "$pid" ] && [ "$own" = true ]; then
+      log "stopping stale instance (pid $pid), if it still runs"
       stop_windows_pid "$pid" "$pid_started"
-    else
-      kill "$pid" 2>/dev/null || true
-      sleep 1
-      kill -9 "$pid" 2>/dev/null || true
     fi
+  elif [ -n "$pid" ] && [ "$own" = true ] && app_alive "$pid" "$pid_started"; then
+    log "stopping stale instance (pid $pid)"
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    kill -9 "$pid" 2>/dev/null || true
   fi
 }
 
