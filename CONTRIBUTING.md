@@ -132,6 +132,7 @@ there, and every such skip carries a marker on its line or in the comment direct
 | #976 | One-OS mechanism | The mechanism exists on one system only: Unix socket files and their path limit, or a test that runs only on Windows (named pipes, 8.3 names, drive letters, access lists) or only on Linux (`/proc`). |
 | #977 | Codex leader on Windows | Attaching a Codex leader on Windows is not built yet. |
 | #978 | pi leader on Windows | Attaching a pi leader on Windows is not built yet. |
+| #980 | Elevated Windows process | xezar refuses its MCP pipe when it runs as administrator, as every GitHub Windows runner step does. |
 
 The older `win32-r9` marker, for a test that ran on Windows and failed, is retired: fix the failure
 or skip the test with a `win32-skip` marker. `packages/xezar/src/platform/skip-marker-scan.test.ts`
