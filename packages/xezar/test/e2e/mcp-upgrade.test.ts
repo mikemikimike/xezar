@@ -12,6 +12,7 @@ import { promisify } from 'node:util';
 import { pipeFiles } from '../../src/mcp/pipe-endpoint.ts';
 import { checkPrivateDir } from '../../src/platform/private-dir.ts';
 import { npmCommand, onWindows, shortTmpRoot, TEST_DIR_RM_OPTIONS } from '../helpers/platform.ts';
+import { windowsElevated } from '../helpers/windows-elevation.ts';
 
 const execFile = promisify(execFileCallback);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -240,7 +241,10 @@ async function assertWorkingCockpit(cockpit: Cockpit, cliPath: string, repo: str
   assert.ok(bridged && !bridged.isError, `${label}: the MCP bridge reaches the service (${bridged?.text})\n${cockpit.output()}`);
 }
 
-test('A-16: an upgraded cockpit stays usable with MCP state corrupt, deleted, after a hard restart, and never has two owners', { timeout: 300_000 }, async (t) => {
+/** The packed CLI is a separate process, so the unit suite's elevation hook cannot reach it. */
+const ELEVATED = windowsElevated() ? 'win32-skip(#980): xezar refuses its MCP pipe when it runs as administrator, as every GitHub Windows runner step does' : false;
+
+test('A-16: an upgraded cockpit stays usable with MCP state corrupt, deleted, after a hard restart, and never has two owners', { timeout: 300_000, skip: ELEVATED }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'xezar-mcp-upgrade-'));
   // The socket lives under XEZ_HOME and a Unix socket path has a ~104-byte limit, which a task's
   // TMPDIR can exceed — so the home is short, under /tmp.
