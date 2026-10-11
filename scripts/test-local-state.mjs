@@ -1,7 +1,8 @@
 // Shared test-only bootstrap. os.tmpdir() and child tools inherit the same project-local
 // scratch root; individual fixtures keep owning their unique directories and cleanup.
 import { createHash } from 'node:crypto';
-import { mkdirSync, realpathSync } from 'node:fs';
+import fs, { mkdirSync, realpathSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, join, resolve, sep } from 'node:path';
 
@@ -51,3 +52,29 @@ for (const name of TASK_BOUND_ENV) delete process.env[name];
 const ceilings = (process.env.GIT_CEILING_DIRECTORIES ?? '').split(delimiter).filter(Boolean);
 if (!ceilings.includes(realScratch)) ceilings.push(realScratch);
 process.env.GIT_CEILING_DIRECTORIES = ceilings.join(delimiter);
+
+// Node 22 on Windows ignores rmSync's `maxRetries`: measured on 22.23.3, a folder a just-exiting
+// child still holds fails at once with EBUSY, where Node 24 retries and removes it. Every test
+// cleans up with those options (TEST_DIR_RM_OPTIONS), and on GitHub's Node 22 Windows runner that
+// failed hundreds of tests that pass on Node 24 (#963). There, and only there, rmSync gets the
+// retry its documentation promises: EBUSY, EMFILE, ENFILE, ENOTEMPTY and EPERM, linear backoff.
+// `packages/xezar/vitest.setup.ts` imports this file again so each vitest worker gets it too.
+const RM_RETRY_CODES = new Set(['EBUSY', 'EMFILE', 'ENFILE', 'ENOTEMPTY', 'EPERM']);
+if (process.platform === 'win32' && process.versions.node.split('.')[0] === '22' && !fs.rmSync.xezRetry) {
+  const plainRmSync = fs.rmSync;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  const rmSyncWithRetry = (path, options) => {
+    const retries = options?.recursive ? (options.maxRetries ?? 0) : 0;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return plainRmSync(path, options);
+      } catch (err) {
+        if (attempt > retries || !RM_RETRY_CODES.has(err?.code)) throw err;
+        Atomics.wait(pause, 0, 0, (options.retryDelay ?? 100) * attempt);
+      }
+    }
+  };
+  rmSyncWithRetry.xezRetry = true;
+  fs.rmSync = rmSyncWithRetry;
+  syncBuiltinESMExports();
+}
