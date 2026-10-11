@@ -87,6 +87,15 @@ export interface McpServiceOptions {
   readonly ownership?: ProjectOwnership;
   /** Told when a session becomes the owner and when its connection closes — push delivery (#309). */
   readonly sessions?: McpSessionObserver;
+  /** Test seams for the Windows pipe (#963), so its rules run on every OS. Production passes none. */
+  readonly pipe?: McpPipeSeams;
+}
+
+export interface McpPipeSeams {
+  readonly ensurePrivateDir?: typeof ensurePrivateDir;
+  readonly checkPrivateDir?: typeof checkPrivateDir;
+  /** Where a pipe name is listened on. Default: the name itself. */
+  readonly listenAt?: (pipeName: string) => string;
 }
 
 /**
@@ -258,7 +267,8 @@ async function clearStaleSocket(path: string): Promise<void> {
  */
 async function listenMcpPipe(files: PipeFiles, opts: McpServiceOptions): Promise<McpServiceHandle> {
   assertXezarHomeWriteIsSandboxed(files.dir, opts.env);
-  const privacy = await ensurePrivateDir(files.dir, {}, { startTimeOf: process.pid });
+  const seams = opts.pipe ?? {};
+  const privacy = await (seams.ensurePrivateDir ?? ensurePrivateDir)(files.dir, {}, { startTimeOf: process.pid });
   if (!privacy.ok) throw new Error(privacy.message);
   const processStartTime = privacy.startedAt;
   if (typeof processStartTime !== 'number') throw new Error('xezar could not read its own start time, which the MCP pipe needs');
@@ -287,7 +297,7 @@ async function listenMcpPipe(files: PipeFiles, opts: McpServiceOptions): Promise
       throw new Error(MCP_ALREADY_SERVING);
     }
     if (typeof existing !== 'string' && existing.pid !== process.pid) {
-      const check = await checkPrivateDir(files.dir, [files.endpoint], {}, { startTimeOf: existing.pid });
+      const check = await (seams.checkPrivateDir ?? checkPrivateDir)(files.dir, [files.endpoint], {}, { startTimeOf: existing.pid });
       if (check.ok && endpointIsLive(existing, check.startedAt)) throw new Error(MCP_ALREADY_SERVING);
     }
     for (let attempt = 1; ; attempt++) {
@@ -303,7 +313,7 @@ async function listenMcpPipe(files: PipeFiles, opts: McpServiceOptions): Promise
       try {
         await new Promise<void>((resolve, reject) => {
           candidate.once('error', reject);
-          candidate.listen(pipeName, () => {
+          candidate.listen(seams.listenAt?.(pipeName) ?? pipeName, () => {
             candidate.off('error', reject);
             resolve();
           });
