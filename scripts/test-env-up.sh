@@ -22,6 +22,10 @@
 #   2026-10-10 run under Git Bash on Windows: no setsid/nohup there, the descriptor records the
 #             WINDOWS pid of node (not the MSYS pid `$!` names) and platform `win32`, and a stop
 #             ends exactly that pid's tree with taskkill. POSIX behaviour is unchanged.
+#   2026-10-11 Windows: a pid alone is not an identity, so the descriptor also records the app's
+#             start time (app.processStartedAt), and liveness and stop go through
+#             scripts/test-env-windows.mjs: that exact process and its creation-filtered tree,
+#             never taskkill /T, which follows stale parent pids into unrelated processes.
 set -eu
 
 # ---- project-specific parameters -------------------------------------------
@@ -201,21 +205,20 @@ mkdir -p "$QA_DIR"
 
 log() { echo "[test-env] $*" >&2; }
 
-# Is the recorded app pid alive? POSIX: `kill -0`, exactly as before. Windows: Node answers for the
-# Windows pid (EPERM still means "exists").
+# Is the recorded app pid alive? POSIX: `kill -0`, exactly as before. Windows: the pid must still
+# name the process that started at the recorded time ($2); without one it never counts as alive.
 app_alive() {
   if [ "$ON_WINDOWS" = 1 ]; then
-    node -e 'try { process.kill(Number(process.argv[1]), 0) } catch (e) { process.exit(e.code === "EPERM" ? 0 : 1) }' "$1" 2>/dev/null
+    node "$SCRIPT_DIR/test-env-windows.mjs" alive "$1" "${2:-}" 2>/dev/null
   else
     kill -0 "$1" 2>/dev/null
   fi
 }
 
-# Windows only: end exactly this Windows pid and the processes it started. taskkill by its full
-# System32 path, never by image name or pattern; /F because a console program has no catchable stop.
+# Windows only: end exactly this Windows pid – while it is still the process that started at $2 –
+# and the processes it started, each killed by its start time. Never by image name or pattern.
 stop_windows_pid() {
-  [ -n "${SYSTEMROOT:-}" ] || { log "SYSTEMROOT is not set — cannot reach taskkill to stop pid $1"; return 0; }
-  "$SYSTEMROOT/System32/taskkill.exe" //PID "$1" //T //F >/dev/null 2>&1 || true
+  node "$SCRIPT_DIR/test-env-windows.mjs" stop "$1" "${2:-}" || log "could not stop pid $1"
 }
 
 http_ok() { curl -fsS --max-time 5 "$1" >/dev/null 2>&1; }
@@ -284,6 +287,7 @@ try_reuse() {
   [ "$(json_get "$ENV_DESCRIPTOR" status)" = running ] || return 1
 
   pid=$(json_get "$ENV_DESCRIPTOR" app.pid)
+  pid_started=$(json_get "$ENV_DESCRIPTOR" app.processStartedAt)
   url=$(json_get "$ENV_DESCRIPTOR" baseUrl)
   started=$(json_get "$ENV_DESCRIPTOR" startedAt)
   requested_single_project=false
@@ -303,7 +307,7 @@ try_reuse() {
   }
   [ -n "$pid" ] && [ -n "$url" ] || return 1
   # A state file is a claim, not proof: the PID must still be alive…
-  app_alive "$pid" || return 1
+  app_alive "$pid" "$pid_started" || return 1
   # …and the app must actually answer. Health first (deep: reads config + git),
   # then the app shell, which is what the e2e specs actually load.
   http_ok "$url$HEALTH_PATH" || return 1
@@ -342,12 +346,13 @@ try_reuse() {
 teardown_stale() {
   [ -f "$ENV_DESCRIPTOR" ] || return 0
   pid=$(json_get "$ENV_DESCRIPTOR" app.pid)
+  pid_started=$(json_get "$ENV_DESCRIPTOR" app.processStartedAt)
   own=$(json_get "$ENV_DESCRIPTOR" startedByThisRepo)
   # Only ever kill what this repo started.
-  if [ -n "$pid" ] && [ "$own" = true ] && app_alive "$pid"; then
+  if [ -n "$pid" ] && [ "$own" = true ] && app_alive "$pid" "$pid_started"; then
     log "stopping stale instance (pid $pid)"
     if [ "$ON_WINDOWS" = 1 ]; then
-      stop_windows_pid "$pid"
+      stop_windows_pid "$pid" "$pid_started"
     else
       kill "$pid" 2>/dev/null || true
       sleep 1
@@ -528,6 +533,9 @@ start_app() {
         win_pid=$(cat "/proc/$APP_PID/winpid" 2>/dev/null || true)
         [ -n "$win_pid" ] || { log "cannot read the Windows pid of MSYS pid $APP_PID"; exit 1; }
         APP_PID=$win_pid
+        # Its start time is what makes the recorded pid an identity (see stop_windows_pid).
+        APP_STARTED_AT=$(node "$SCRIPT_DIR/test-env-windows.mjs" start-time "$APP_PID") || {
+          log "cannot read the start time of pid $APP_PID"; exit 1; }
       fi
       log "healthy on $BASE_URL after ${waited}s"
       return 0
@@ -538,7 +546,10 @@ start_app() {
   log "health wait timed out after ${HEALTH_TIMEOUT}s — see .local/qa/test-env-app.log"
   if [ "$ON_WINDOWS" = 1 ]; then
     win_pid=$(cat "/proc/$APP_PID/winpid" 2>/dev/null || true)
-    [ -z "$win_pid" ] || stop_windows_pid "$win_pid"
+    # This boot started it moments ago, so the start time read now is still its own.
+    win_started=""
+    [ -z "$win_pid" ] || win_started=$(node "$SCRIPT_DIR/test-env-windows.mjs" start-time "$win_pid" || true)
+    [ -z "$win_started" ] || stop_windows_pid "$win_pid" "$win_started"
   else
     kill "$APP_PID" 2>/dev/null || true
   fi
@@ -578,7 +589,7 @@ write_descriptor() {
   [ "${XEZ_SINGLE_PROJECT:-}" = 1 ] && SINGLE_PROJECT=true
   node -e '
     const fs = require("fs");
-    const [out, baseUrl, port, pid, cmd, bInstalled, bCmd, bVer, bNotes, desc, singleProject, platform, agentHome, singleProjectRoot, stateLayout] = process.argv.slice(1);
+    const [out, baseUrl, port, pid, cmd, bInstalled, bCmd, bVer, bNotes, desc, singleProject, platform, agentHome, singleProjectRoot, stateLayout, processStartedAt] = process.argv.slice(1);
     fs.writeFileSync(out, JSON.stringify({
       version: 1,
       runId: "xezar-" + new Date().toISOString().slice(0, 10) + "-" + pid,
@@ -588,7 +599,7 @@ write_descriptor() {
       startedByThisRepo: true,
       startScript: "scripts/test-env-up.sh",
       stopScript: "scripts/test-env-down.sh",
-      app: { startCommand: cmd, port: Number(port), healthPath: "/api/v1/health", pid: Number(pid) },
+      app: { startCommand: cmd, port: Number(port), healthPath: "/api/v1/health", pid: Number(pid), ...(processStartedAt ? { processStartedAt: Number(processStartedAt) } : {}) },
       services: [],
       credentials: [],
       environment: { singleProject: singleProject === "true", agentHome, singleProjectRoot: singleProjectRoot === "true", stateLayout },
@@ -609,7 +620,7 @@ write_descriptor() {
     "XEZ_DRY_RUN=1 XEZ_HOME=.local/qa/xez-home CLAUDE_CONFIG_DIR=.local/qa/agent-home/claude CODEX_HOME=.local/qa/agent-home/codex OPENCODE_CONFIG_DIR=.local/qa/agent-home/opencode node packages/xezar/dist/index.js --repo $REPO_ROOT --port $PORT --no-open $APP_LAYOUT_INPUT" \
     "$BROWSER_INSTALLED" "$BROWSER_COMMAND" "$BROWSER_VERSION" "$BROWSER_NOTES" "$BROWSER_DESCRIPTOR" \
     "$SINGLE_PROJECT" "$(platform_name)" \
-    "$AGENT_HOME_FINGERPRINT" "$(single_project_root)" "$BOOT_STATE_LAYOUT"
+    "$AGENT_HOME_FINGERPRINT" "$(single_project_root)" "$BOOT_STATE_LAYOUT" "${APP_STARTED_AT:-}"
 }
 
 # ---- main -------------------------------------------------------------------

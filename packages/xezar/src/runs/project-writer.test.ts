@@ -7,8 +7,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { linkDir, onWindows, TEST_DIR_RM_OPTIONS } from '../../test/helpers/platform.ts';
-import { claimStartedAt } from '../platform/claim-start.ts';
-import { ownProjectData } from './project-writer.ts';
+import { __forgetClaimProcessesForTests, claimStartedAt } from '../platform/claim-start.ts';
+import { foreignWriterClaimIsLive, ownProjectData, primeWriterClaims } from './project-writer.ts';
 import { localMachineId } from '../machine-identity.ts';
 import { RunStore } from './store.ts';
 import { RunManager } from '../workflows/run.ts';
@@ -417,4 +417,20 @@ it.runIf(onWindows)('reclaims a claim whose pid now names a process created afte
 it.runIf(onWindows)('GUARD: still refuses a live writer whose claim records its own start', async () => {
   const child = await owner(root);
   expect(() => ownProjectData(root)).toThrow(`live writer PID ${child.pid}`);
+}, 60_000);
+
+// #963 review: a serving process never runs the blocking check. Without a remembered answer it keeps
+// the pid answer; after the off-thread look both readers of the claim agree it is stale.
+// win32-skip(#976): the claim's start time is recorded and compared on Windows only
+it.runIf(onWindows)('a serving process judges a reused pid from the off-thread look, and the project list agrees', async () => {
+  __forgetClaimProcessesForTests();
+  const child = await owner(join(root, 'elsewhere'));
+  const stale = peer(child.pid!, JSON.stringify({ pid: child.pid, host: hostname(), machine: LOCAL_MACHINE, started: Date.now() - 60 * 60 * 1000 }));
+  expect(() => ownProjectData(root, { claimCheck: 'remembered' })).toThrow(`live writer PID ${child.pid}`);
+  expect(foreignWriterClaimIsLive(root)).toBe(true);
+  await primeWriterClaims(root);
+  expect(foreignWriterClaimIsLive(root)).toBe(false);
+  expect(() => ownProjectData(root, { claimCheck: 'remembered' })).not.toThrow();
+  expect(existsSync(stale)).toBe(false);
+  __forgetClaimProcessesForTests();
 }, 60_000);

@@ -61,6 +61,7 @@ import { formatDuration, formatTokens, glyphsFor } from './terminal/format.ts';
 import { startLongPathNotice } from './platform/long-paths.ts';
 import { pathWithLoginShell } from './platform/login-shell-path.ts';
 import { launchCmd, launchDetached } from './platform/process-launch.ts';
+import { portTaken } from './platform/port-taken.ts';
 import { exitAfterStoppingTrees, onShutdownSignals } from './platform/shutdown-signals.ts';
 import { runMigrations } from './workspace/migrations.ts';
 import {
@@ -1366,7 +1367,7 @@ function listenOnFreePort(
       return next <= PORT_MAX ? next : null;
     };
     const onError = (err: NodeJS.ErrnoException) => {
-      if (err.code !== 'EADDRINUSE') {
+      if (!portTaken(err.code)) {
         fail(`cannot listen on ${host}:${port} (${err.message})`);
         return;
       }

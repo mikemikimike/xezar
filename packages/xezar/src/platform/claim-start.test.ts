@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CLAIM_START_SLACK_MS, claimProcess, claimStartedAt } from './claim-start.ts';
+import {
+  __forgetClaimProcessesForTests,
+  CLAIM_START_SLACK_MS,
+  claimProcess,
+  claimStartedAt,
+  primeClaimProcess,
+  SAME_PROCESS_REMEMBERED_MS,
+} from './claim-start.ts';
+import type { TableRunner } from './process-table.ts';
+
+/** `ms` as the Windows FILETIME text PowerShell prints. */
+const fileTime = (ms: number): string => String(BigInt(ms) * 10000n + 116444736000000000n);
 
 describe('claimStartedAt (#963)', () => {
   it('records a start time on Windows only', () => {
@@ -25,6 +36,42 @@ describe('claimProcess (#963)', () => {
       expect(claimProcess(42, started, { platform: 'win32', createdAt: () => STARTED + 60_000 })).toBe('unknown');
     }
     expect(claimProcess(0, STARTED, { platform: 'win32', createdAt: () => STARTED + 60_000 })).toBe('unknown');
+  });
+
+  it('GUARD: a remembered check never looks on the calling thread: a miss keeps the pid answer and looks in the background', async () => {
+    __forgetClaimProcessesForTests();
+    const run = vi.fn<TableRunner>(async () => fileTime(STARTED + 60_000));
+    // 'remembered' with nothing remembered: unknown at once – the look runs in the background.
+    expect(claimProcess(42, STARTED, { platform: 'win32', mode: 'remembered', run, powershell: 'powershell.exe' })).toBe('unknown');
+    await primeClaimProcess(42, STARTED, { platform: 'win32', run, powershell: 'powershell.exe' });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0]![2]).toMatchObject({ env: expect.objectContaining({ CLAIM_START_PID: '42' }) });
+    // The background look's answer is what the next call gets, and a second prime starts nothing.
+    expect(claimProcess(42, STARTED, { platform: 'win32', mode: 'remembered' })).toBe('other');
+    await primeClaimProcess(42, STARTED, { platform: 'win32', run, powershell: 'powershell.exe' });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('trusts a remembered same only briefly, because that writer can die and its pid be reused', async () => {
+    __forgetClaimProcessesForTests();
+    const now = vi.spyOn(Date, 'now');
+    try {
+      now.mockReturnValue(STARTED + 1_000);
+      await primeClaimProcess(7, STARTED, { platform: 'win32', run: async () => fileTime(STARTED - 50), powershell: 'powershell.exe' });
+      expect(claimProcess(7, STARTED, { platform: 'win32', mode: 'remembered' })).toBe('same');
+      now.mockReturnValue(STARTED + 1_000 + SAME_PROCESS_REMEMBERED_MS + 1);
+      expect(claimProcess(7, STARTED, { platform: 'win32', mode: 'remembered' })).toBe('unknown');
+    } finally {
+      now.mockRestore();
+      __forgetClaimProcessesForTests();
+    }
+  });
+
+  it('remembers nothing it could not read', async () => {
+    __forgetClaimProcessesForTests();
+    await primeClaimProcess(9, STARTED, { platform: 'win32', run: async () => null, powershell: 'powershell.exe' });
+    expect(claimProcess(9, STARTED, { platform: 'win32', mode: 'remembered' })).toBe('unknown');
+    __forgetClaimProcessesForTests();
   });
 
   it('GUARD: Linux and macOS never look and never answer other', () => {

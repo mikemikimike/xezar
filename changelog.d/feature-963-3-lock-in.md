@@ -19,3 +19,10 @@
   use".** Windows reuses process IDs quickly, so the left-behind claim's ID could name an unrelated
   program. A claim now also records when its process started, and an ID that now names a later
   process no longer counts as the writer. Linux and macOS are unchanged. (#963)
+- 🐛 **Windows: a busy machine no longer pauses xezar while it checks the project lock.** The check
+  that tells a left-behind claim from a live one now runs in the background once xezar is serving,
+  and the project list and the lock give the same answer. (#963)
+- 🐛 **Windows: xezar moves to the next port when Windows has reserved the one it wanted.** Windows
+  keeps ranges of ports for itself (Hyper-V, WSL, Docker), and they move on every restart. A port
+  inside such a range used to stop the start with "permission denied"; xezar now tries the next
+  port, as it does for a port in use. Linux and macOS are unchanged. (#963)

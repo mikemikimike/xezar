@@ -2,7 +2,7 @@
 // that reaches `skills.ts` (#671).
 import './tools/mcp-test-home.testkit.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
-import { linkDir, TEST_DIR_RM_OPTIONS } from '../../test/helpers/platform.ts';
+import { linkDir, onWindows, TEST_DIR_RM_OPTIONS } from '../../test/helpers/platform.ts';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -56,6 +56,24 @@ function snapshot(root: string): Map<string, string> {
   };
   walk(root);
   return out;
+}
+
+/**
+ * Move a project folder away. On Windows a short-lived process the project context started
+ * (Git, a worktree prune) can still be working inside it, and Windows refuses to move a folder
+ * in use with EBUSY/EPERM until that process exits (#963): wait for it, within a bound.
+ */
+async function moveFolder(from: string, to: string): Promise<void> {
+  for (let tries = 0; ; tries++) {
+    try {
+      renameSync(from, to);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!onWindows || (code !== 'EBUSY' && code !== 'EPERM') || tries >= 100) throw error;
+      await new Promise((done) => setTimeout(done, 100));
+    }
+  }
 }
 
 function seedRun(store: RunStore, title: string, task: string): string {
@@ -393,7 +411,7 @@ describe('a session bound to a project whose root has disappeared', () => {
 
   it('fails closed when the root is moved away and something else appears at the same path', async () => {
     const binding = await bindMcpSession(fx.source, A);
-    renameSync(fx.rootA, `${fx.rootA}-moved`);
+    await moveFolder(fx.rootA, `${fx.rootA}-moved`);
     try {
       mkdirSync(fx.rootA);
       expect(statSync(fx.rootA).isDirectory()).toBe(true);
@@ -406,7 +424,7 @@ describe('a session bound to a project whose root has disappeared', () => {
   it('fails closed when the root is moved away and a symlink back to the same folder takes its place', async () => {
     // Same device and inode as at bind time — only the realpath comparison catches this.
     const binding = await bindMcpSession(fx.source, A);
-    renameSync(fx.rootA, `${fx.rootA}-moved`);
+    await moveFolder(fx.rootA, `${fx.rootA}-moved`);
     try {
       linkDir(`${fx.rootA}-moved`, fx.rootA);
       expect((await refusal(binding.project())).reason).toBe('missing-root');

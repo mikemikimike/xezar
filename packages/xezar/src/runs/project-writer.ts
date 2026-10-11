@@ -3,7 +3,7 @@ import { closeSync, openSync, mkdirSync, readFileSync, readdirSync, realpathSync
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { localMachineId, machineRelation, type MachineRelation } from '../machine-identity.ts';
-import { claimProcess, claimStartedAt } from '../platform/claim-start.ts';
+import { claimProcess, claimStartedAt, primeClaimProcess } from '../platform/claim-start.ts';
 
 const owned = new Map<string, string>();
 
@@ -79,8 +79,14 @@ function foreignClaimDetail(path: string, recordedHost: unknown, pid: number, re
  * but cannot both see themselves alone. Dead claims have unique paths, so reclaiming one
  * cannot unlink a replacement owner's lock. Keep claims until process death: dispose() can
  * leave live sessions, and exit handlers may still flush. The next owner reaps dead PIDs.
+ *
+ * `claimCheck` (Windows only, #963): `look` – the default, for the boot step before anything is
+ * served – may start one synchronous PowerShell to tell a live writer from a later process that
+ * reused its pid. A caller on a serving process passes `remembered`, which never blocks: run
+ * `primeWriterClaims` first for an exact answer, or accept the pid answer until a background look
+ * lands.
  */
-export function ownProjectData(dataDir: string): void {
+export function ownProjectData(dataDir: string, options: { claimCheck?: 'look' | 'remembered' } = {}): void {
   mkdirSync(dataDir, { recursive: true });
   const canonical = realpathSync(dataDir);
   const machine = localMachineId();
@@ -144,7 +150,7 @@ export function ownProjectData(dataDir: string): void {
       }
       // Windows (#963): the pid lives, but a process created after this claim was written has
       // reused it; the claimer itself is gone. A claim recording no start time keeps the pid answer.
-      if (!dead && peer && typeof peer === 'object' && claimProcess(pid, (peer as { started?: unknown }).started) === 'other') {
+      if (!dead && peer && typeof peer === 'object' && claimProcess(pid, (peer as { started?: unknown }).started, { mode: options.claimCheck ?? 'look' }) === 'other') {
         dead = true;
       }
       if (dead) {
@@ -169,6 +175,29 @@ export function ownProjectData(dataDir: string): void {
     }
     throw new ProjectWriterError(canonical, error instanceof Error ? error.message : String(error));
   }
+}
+
+/**
+ * Windows (#963): look up, off the main thread, whether each live local claim's pid is still the
+ * process that wrote it, so a following `ownProjectData(dataDir, { claimCheck: 'remembered' })` or
+ * `foreignWriterClaimIsLive` answers exactly without blocking. Never rejects; elsewhere a no-op.
+ */
+export async function primeWriterClaims(dataDir: string): Promise<void> {
+  // Only a system whose claims record a start time has anything to look up.
+  if (claimStartedAt() === undefined) return;
+  let names: string[];
+  try { names = readdirSync(join(dataDir, 'writer-claims')); }
+  catch { return; }
+  await Promise.all(names.map(async (name) => {
+    const pid = Number(CLAIM_NAME.exec(name)?.[1]);
+    if (!Number.isSafeInteger(pid) || pid === process.pid) return;
+    let claim: { started?: unknown } | undefined;
+    try { claim = JSON.parse(readFileSync(join(dataDir, 'writer-claims', name), 'utf8')) as typeof claim; }
+    catch { return; }
+    if (!claim || typeof claim !== 'object' || claim.started === undefined) return;
+    try { process.kill(pid, 0); } catch { return; }
+    await primeClaimProcess(pid, claim.started);
+  }));
 }
 
 /**
@@ -200,7 +229,7 @@ export function foreignWriterClaimIsLive(dataDir: string): boolean {
     const match = CLAIM_NAME.exec(name);
     const pid = Number(match?.[1]);
     if (!match || !Number.isSafeInteger(pid) || pid === process.pid) continue;
-    let claim: { host?: unknown; machine?: unknown } | undefined;
+    let claim: { host?: unknown; machine?: unknown; started?: unknown } | undefined;
     try { claim = JSON.parse(readFileSync(join(dataDir, 'writer-claims', name), 'utf8')) as typeof claim; }
     catch { continue; }
     if (!claim || typeof claim !== 'object') continue;
@@ -212,6 +241,9 @@ export function foreignWriterClaimIsLive(dataDir: string): boolean {
       // still a live process.
       if ((error as NodeJS.ErrnoException).code === 'ESRCH') continue;
     }
+    // The same start-time rule as `ownProjectData` (#963), from remembered answers only: a list
+    // render never starts a blocking PowerShell, and a miss keeps the pid answer.
+    if (claimProcess(pid, claim.started, { mode: 'remembered' }) === 'other') continue;
     return true;
   }
   return false;

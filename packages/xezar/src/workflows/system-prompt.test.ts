@@ -193,9 +193,10 @@ describe('systemPrompt end-to-end (dry run)', () => {
     // Closed, not only flushed: a closed store writes nothing more into the folder removed below.
     await store.close();
     // The namer is not waited for (`autoNameRun`): its mock may still work in the folder for up to
-    // NAMER_TIMEOUT_MS (20 s), which Windows refuses to remove. Windows retries for about 25 s.
-    rmTestDirExplained(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 22, retryDelay: 100 });
-  });
+    // two attempts of NAMER_TIMEOUT_MS (20 s) each, which Windows refuses to remove. Windows
+    // retries for about 60 s (CI measured a namer still alive after 25 s).
+    rmTestDirExplained(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 34, retryDelay: 100 });
+  }, onWindows ? 90_000 : undefined);
 
   // Agent step + trailing check so the agent step is non-interactive — the
   // session auto-ends after the mock's turn and the run reaches a terminal
@@ -533,9 +534,10 @@ describe('the global follow-up gate (dry run)', () => {
     // Closed, not only flushed: a closed store writes nothing more into the folder removed below.
     await store.close();
     // The namer is not waited for (`autoNameRun`): its mock may still work in the folder for up to
-    // NAMER_TIMEOUT_MS (20 s), which Windows refuses to remove. Windows retries for about 25 s.
-    rmTestDirExplained(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 22, retryDelay: 100 });
-  });
+    // two attempts of NAMER_TIMEOUT_MS (20 s) each, which Windows refuses to remove. Windows
+    // retries for about 60 s (CI measured a namer still alive after 25 s).
+    rmTestDirExplained(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 34, retryDelay: 100 });
+  }, onWindows ? 90_000 : undefined);
 
   const workflow: WorkflowDef = {
     name: 'gate-probe',

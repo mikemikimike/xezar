@@ -248,6 +248,7 @@ describe('Codex quota telemetry', () => {
  * child that catches SIGTERM and deliberately keeps running.
  */
 describe('wall-clock timeout for a real Codex child that ignores SIGTERM', () => {
+  const TIMEOUT_MS = 2_000;
   const mockBin = fileURLToPath(
     new URL('./__fixtures__/codex/mock-codex-app-server.mjs', import.meta.url),
   );
@@ -256,7 +257,9 @@ describe('wall-clock timeout for a real Codex child that ignores SIGTERM', () =>
     'keeps the SIGKILL escalation armed until the child exits',
     async () => {
       const events: AgentEvent[] = [];
-      const session = new CodexAppServerRunner({ bin: mockBin, timeoutMs: 100 }).startSession(
+      // Long enough for the mock to install its SIGTERM handler: at 100 ms a loaded runner had not
+      // started it yet, the default SIGTERM ended it at once, and nothing was left to escalate.
+      const session = new CodexAppServerRunner({ bin: mockBin, timeoutMs: TIMEOUT_MS }).startSession(
         {
           userPrompt: 'check the working tree',
           cwd: process.cwd(),
@@ -271,13 +274,13 @@ describe('wall-clock timeout for a real Codex child that ignores SIGTERM', () =>
         const result = await Promise.race([
           session.result,
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('session stayed pending after the SIGKILL grace period')), 13_000),
+            setTimeout(() => reject(new Error('session stayed pending after the SIGKILL grace period')), TIMEOUT_MS + KILL_GRACE_MS + 3_000),
           ),
         ]);
 
         // win32-skip(#974): Windows has no catchable SIGTERM, so there is no SIGKILL escalation to wait for
-        if (!onWindows) expect(Date.now() - startedAt).toBeGreaterThanOrEqual(KILL_GRACE_MS - 500);
-        // Windows kills at the 100 ms limit, often before the mock wrote its first text (#963).
+        if (!onWindows) expect(Date.now() - startedAt).toBeGreaterThanOrEqual(TIMEOUT_MS + KILL_GRACE_MS - 500);
+        // Windows kills at the time limit, which can come before the mock wrote its first text (#963).
         if (onWindows) expect(['', 'Checking the working tree.']).toContain(result.text);
         else expect(result.text).toBe('Checking the working tree.');
         expect(result.timedOut).toBe(true); // #943: the run manager sweeps after a timeout
@@ -297,7 +300,7 @@ describe('wall-clock timeout for a real Codex child that ignores SIGTERM', () =>
         }
       }
     },
-    15_000,
+    TIMEOUT_MS + KILL_GRACE_MS + 8_000,
   );
 });
 

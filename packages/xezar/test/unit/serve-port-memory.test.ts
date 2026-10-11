@@ -559,7 +559,10 @@ async function tryHold(port: number): Promise<Server | undefined> {
     });
     return server;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
+    const code = (err as NodeJS.ErrnoException).code;
+    // Windows answers EACCES for a port inside a range the system has reserved (Hyper-V, WSL):
+    // as unusable as a taken one, so it is skipped the same way.
+    if (code !== 'EADDRINUSE' && !(onWindows && code === 'EACCES')) throw err;
     return undefined;
   }
 }

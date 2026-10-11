@@ -8,6 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { onWindows } from '../helpers/platform.ts';
 import { promisify } from 'node:util';
 import { npmCommand, TEST_DIR_RM_OPTIONS } from '../helpers/platform.ts';
 
@@ -50,7 +51,9 @@ function withoutAuditLog(snapshot: Record<string, string>): Record<string, strin
   return rest;
 }
 
-test('the release tarball installs and runs the dry-run CLI workflow', { timeout: 120_000 }, async () => {
+// Windows CI takes 70–80 s for this case where Linux takes about 30 s (npm install and every
+// CLI start are slower there), so the old 120 s bound failed a healthy run under load (#963).
+test('the release tarball installs and runs the dry-run CLI workflow', { timeout: onWindows ? 240_000 : 120_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'xezar-package-e2e-'));
 
   try {

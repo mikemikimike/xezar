@@ -20,6 +20,7 @@ let childExited = false;
 const extraChildren = new Set();
 const groups = new Set(); // process-group ids of every CLI spawned (each leads its own); Windows: the CLI pids
 const spawnTimes = new Map(); // CLI pid → when it was spawned (Windows: dates its direct children)
+const exitTimes = new Map(); // CLI pid → when its `exit` event fired: no direct child is newer
 const onWindows = process.platform === 'win32';
 let fixtureRepo, fixtureEnv;
 let forwarded = 0;
@@ -116,7 +117,10 @@ function spawnCli(args, extraEnv = {}) {
   // with no console of its own. Its tree is found through the process table instead (below).
   const proc = spawn(process.execPath, [cli, 'serve', '--repo', fixtureRepo, '--no-open', '--output', 'lines', '--color', 'never', ...args],
     { cwd: fixtureRepo, env: { ...fixtureEnv, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'], ...(onWindows ? {} : { detached: true }) });
-  proc.exited = new Promise((done) => proc.once('exit', done)); // attached at spawn, so an early exit is never missed
+  proc.exited = new Promise((done) => proc.once('exit', (...result) => {
+    if (proc.pid) exitTimes.set(proc.pid, Date.now());
+    done(...result);
+  })); // attached at spawn, so an early exit is never missed
   if (proc.pid) groups.add(proc.pid); // a failed spawn has no pid and reports through 'error'
   if (proc.pid) spawnTimes.set(proc.pid, spawnedAt);
   return proc;
@@ -144,8 +148,10 @@ async function loadWindowsTree() {
   windowsTree = { ...table, ...thenKill };
 }
 function treeRoot(pid) {
-  // The CLI has exited by the time this runs: a direct child must have been created inside its life.
-  return { pid, spawnedAt: spawnTimes.get(pid) ?? 0, stoppedAt: Date.now() };
+  // The CLI has exited by the time this runs: a direct child must have been created inside its
+  // life, which ended at its exit – not at this read, or a newer process reusing a dead child's
+  // parent pid would count as the CLI's.
+  return { pid, spawnedAt: spawnTimes.get(pid) ?? 0, stoppedAt: exitTimes.get(pid) ?? Date.now() };
 }
 async function treeAlive(pid) {
   const table = await windowsTree.readProcessTable({ timeoutMs: 10_000 });

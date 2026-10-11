@@ -7,7 +7,7 @@ import { pruneOrphans } from '../git-worktree.ts';
 import { armRepoHandle } from '../runs/arm-repo-handle.ts';
 import { reclaimWorktrees } from '../runs/retention.ts';
 import { RunStore, type RunStatus } from '../runs/store.ts';
-import { ownProjectData } from '../runs/project-writer.ts';
+import { ownProjectData, primeWriterClaims } from '../runs/project-writer.ts';
 import type { InstanceModeInForce } from '../workspace/projects.ts';
 import { WorkspaceSemaphore } from '../workspace/semaphore.ts';
 import { AgentQuotaStore } from '../workspace/agent-quota.ts';
@@ -636,7 +636,9 @@ export class ProjectContexts {
     }
 
     const dataDir = projectDataDir(project.root);
-    ownProjectData(dataDir);
+    // A serving process never blocks on the Windows start-time check (#963): look first, off thread.
+    await primeWriterClaims(dataDir);
+    ownProjectData(dataDir, { claimCheck: 'remembered' });
     // keepLive + recover() (#367), same as serveCommand: runs that were live
     // when this project's context last existed are re-queued or resumed.
     const store = RunStore.open(dataDir, { keepLive: true });
