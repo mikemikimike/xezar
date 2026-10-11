@@ -179,7 +179,6 @@ const GRANDFATHERED = [
   'src/workflows/run-unfinished-step.test.ts',
   'src/workflows/run.test.ts',
   'src/workflows/step-timeout-wiring.test.ts',
-  'src/workflows/system-prompt.test.ts',
   'src/workflows/workspace-semaphore.test.ts',
 ];
 
