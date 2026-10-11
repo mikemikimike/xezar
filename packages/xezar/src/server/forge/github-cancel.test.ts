@@ -53,6 +53,8 @@ describe('resolveRepoHandle cancel (#963)', () => {
   });
 
   afterEach(() => {
+    // The fake gh's child on Linux and macOS, which the cancel leaves running.
+    if (existsSync(pidsFile)) for (const pid of JSON.parse(readFileSync(pidsFile, 'utf8')) as number[]) if (alive(pid)) process.kill(pid);
     for (const [key, value] of [['PATH', saved.path], ['PATHEXT', saved.pathext], ['XEZ_FAKE_GH_PIDS', saved.pids]] as const) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -75,8 +77,11 @@ describe('resolveRepoHandle cancel (#963)', () => {
     // Well before gh's own 15 s limit (a Windows stop reads the process table, which takes seconds).
     expect(Date.now() - abortedAt).toBeLessThan(10_000);
 
-    // Settled only after both are gone: no poll needed.
-    expect(pids.map(alive)).toEqual([false, false]);
+    // Settled only after they are gone: no poll needed. Linux and macOS stop `gh` itself with the
+    // one signal, as before; the child it started is the Windows case, where a live process locks
+    // the folder it works in.
+    expect(alive(pids[0]!)).toBe(false);
+    if (onWindows) expect(alive(pids[1]!)).toBe(false);
     // Plain removal, no retry: nothing holds the folder any more.
     rmSync(project, { recursive: true });
     expect(existsSync(project)).toBe(false);
