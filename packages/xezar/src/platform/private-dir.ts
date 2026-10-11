@@ -206,7 +206,20 @@ async function windowsCheck(paths: readonly string[], ensure: boolean, deps: Pri
     env,
   }).catch(() => null);
   if (text === null) return refuse('not-private', folder);
-  return judgeAclReport(parseAclReport(text), paths);
+  const report = parseAclReport(text);
+  if (elevatedCountsAsStandard && deps.run === undefined) report.elevated = false;
+  return judgeAclReport(report, paths);
+}
+
+let elevatedCountsAsStandard = false;
+
+/**
+ * Tests only (#980): GitHub's Windows runners run every step elevated, which the live check
+ * refuses. The unit suite's setup calls this so the rest of the check still runs there. A check
+ * with an injected `run` keeps the real rule.
+ */
+export function __treatElevatedAsStandardForTests(): void {
+  elevatedCountsAsStandard = true;
 }
 
 /**

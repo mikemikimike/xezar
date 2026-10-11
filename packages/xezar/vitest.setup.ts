@@ -2,6 +2,7 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeEach } from 'vitest'
+import { __treatElevatedAsStandardForTests } from './src/platform/private-dir.ts'
 
 // Nothing in this suite may write to the developer's own `~/.xezar`. Most cases pin
 // `XEZ_HOME` themselves, but the pin is one global for the whole worker and their
@@ -28,6 +29,11 @@ const pinSandboxHome = (): void => {
 // there, and a test run sends no telemetry from a fixture home either. Forced, not
 // defaulted: `GH_TELEMETRY=log` still records the id.
 process.env.GH_TELEMETRY = '0'
+
+// GitHub's Windows runners run every step as administrator, and xezar refuses its MCP pipe for an
+// elevated process (#980). Every MCP test would fail there for that one reason, so the live folder
+// check treats the account as a standard one; the refusal itself is pinned with an injected report.
+__treatElevatedAsStandardForTests()
 
 // `ANTHROPIC_MODEL` outranks every Claude settings file — `agent-config/model-settings/claude.ts`
 // reads it BEFORE any file, deliberately, because Claude Code does. So a case that asks what the
