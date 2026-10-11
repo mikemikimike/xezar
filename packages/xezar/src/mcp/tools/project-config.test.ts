@@ -256,7 +256,8 @@ afterEach(() => {
     else process.env[key] = savedEnv[key];
   }
   for (const store of stores.splice(0)) store.close();
-  for (const dir of tempDirs.splice(0)) rmSync(dir, TEST_DIR_RM_OPTIONS);
+  // A home's background team-skills clone may still be writing into it: retry briefly on every OS.
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { ...TEST_DIR_RM_OPTIONS, maxRetries: 10, retryDelay: 100 });
 });
 
 /** The cockpit's own request: same-origin, from the loopback deployment a browser talks to. */
