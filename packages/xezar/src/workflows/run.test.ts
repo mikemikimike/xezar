@@ -1936,6 +1936,9 @@ describe('queued stacking reaches the backend (#472)', () => {
   });
 
   afterAll(async () => {
+    // Wait for both runs to finish their own work and their sessions to exit first: on Windows a
+    // live session, or the git it starts at turn end, keeps the folder from being removed (#963).
+    await manager.quiesce();
     await manager.dispose(); // settle the queue watchdog before the root goes (#125)
     for (const [key, value] of Object.entries(savedEnv)) {
       if (value === undefined) delete process.env[key];
