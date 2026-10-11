@@ -207,19 +207,28 @@ async function windowsCheck(paths: readonly string[], ensure: boolean, deps: Pri
   }).catch(() => null);
   if (text === null) return refuse('not-private', folder);
   const report = parseAclReport(text);
-  if (elevatedCountsAsStandard && deps.run === undefined) report.elevated = false;
+  if (deps.run === undefined && report.elevated === true && report.sid !== undefined && elevatedCountsAsStandard()) {
+    asStandardAccount(report, report.sid);
+  }
   return judgeAclReport(report, paths);
 }
 
-let elevatedCountsAsStandard = false;
-
 /**
  * Tests only (#980): GitHub's Windows runners run every step elevated, which the live check
- * refuses. The unit suite's setup calls this so the rest of the check still runs there. A check
- * with an injected `run` keeps the real rule.
+ * refuses. The unit suite's setup sets this global flag (a flag, not an import, so the setup loads
+ * no module before a test mocks what it uses). A check with an injected `run` keeps the real rule.
  */
-export function __treatElevatedAsStandardForTests(): void {
-  elevatedCountsAsStandard = true;
+export const ELEVATED_AS_STANDARD_FOR_TESTS = Symbol.for('xezar.test.elevatedAsStandard');
+
+function elevatedCountsAsStandard(): boolean {
+  return (globalThis as Record<symbol, unknown>)[ELEVATED_AS_STANDARD_FOR_TESTS] === true;
+}
+
+/** What the report would say for a standard account: not elevated, and what the elevated process
+ *  created (owned by Administrators) owned by the user. */
+function asStandardAccount(report: AclReport, sid: string): void {
+  report.elevated = false;
+  for (const [index, sddl] of report.sddl) report.sddl.set(index, sddl.replace(/^O:(?:BA|S-1-5-32-544)(?=G:|D:)/, `O:${sid}`));
 }
 
 /**

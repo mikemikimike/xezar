@@ -2,7 +2,6 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeEach } from 'vitest'
-import { __treatElevatedAsStandardForTests } from './src/platform/private-dir.ts'
 
 // Nothing in this suite may write to the developer's own `~/.xezar`. Most cases pin
 // `XEZ_HOME` themselves, but the pin is one global for the whole worker and their
@@ -32,8 +31,11 @@ process.env.GH_TELEMETRY = '0'
 
 // GitHub's Windows runners run every step as administrator, and xezar refuses its MCP pipe for an
 // elevated process (#980). Every MCP test would fail there for that one reason, so the live folder
-// check treats the account as a standard one; the refusal itself is pinned with an injected report.
-__treatElevatedAsStandardForTests()
+// check treats the account as a standard one (and what it created as the user's); the refusal itself is
+// pinned with an injected report.
+// The flag `ELEVATED_AS_STANDARD_FOR_TESTS` in src/platform/private-dir.ts reads; set here, not imported,
+// so this file loads no module a test file would mock.
+;(globalThis as Record<symbol, unknown>)[Symbol.for('xezar.test.elevatedAsStandard')] = true
 
 // `ANTHROPIC_MODEL` outranks every Claude settings file — `agent-config/model-settings/claude.ts`
 // reads it BEFORE any file, deliberately, because Claude Code does. So a case that asks what the
