@@ -136,8 +136,8 @@ there, and every such skip carries a marker on its line or in the comment direct
 
 The older `win32-r9` marker, for a test that ran on Windows and failed, is retired: fix the failure
 or skip the test with a `win32-skip` marker. `packages/xezar/src/platform/skip-marker-scan.test.ts`
-fails on an unmarked platform skip, on a marker naming any other issue (including the closed
-#963), and on any `win32-r9` marker.
+fails on an unmarked platform skip, on a marker naming any other issue (including the umbrella
+issue #963), and on any `win32-r9` marker.
 
 ### In-checkout scripts
 

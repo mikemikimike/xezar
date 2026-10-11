@@ -1,10 +1,10 @@
 # Multi-project product harness
 
-This POSIX-only harness checks one built cockpit with two registered scratch Git repositories, one isolated `XEZ_HOME`, isolated agent homes, dry-run agents, and independent MCP owner sessions. It covers product wiring rather than duplicating parser, locking, route-matrix, or scheduler unit tests.
+This harness checks one built cockpit with two registered scratch Git repositories, one isolated `XEZ_HOME`, isolated agent homes, dry-run agents, and independent MCP owner sessions. It covers product wiring rather than duplicating parser, locking, route-matrix, or scheduler unit tests.
 
 ## Run it
 
-1. Use Node 22+ on macOS or Linux with Git available. Windows is not supported: the harness needs local Unix sockets and POSIX signals (#963).
+1. Use Node 22+ with Git available. CI runs it on Linux only; on macOS and Windows it is not run regularly.
 2. Run `npm run build:server`.
 3. Run `npm run test:multi-project`.
 4. Read the printed `result.json` path; logs and `state.json` are beside it.

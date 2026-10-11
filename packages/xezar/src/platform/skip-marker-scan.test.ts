@@ -45,7 +45,7 @@ export interface SkipFinding {
 
 const FIX: Readonly<Record<SkipRule, string>> = {
   unmarked: 'add a win32-skip marker naming the open issue and what the platform lacks',
-  closed: '#963 is closed – name the open issue that owns this gap',
+  closed: '#963 is the umbrella issue – name the open issue that owns this gap',
   retired: 'the win32-r9 marker is retired – fix the failure or skip it with a win32-skip marker',
   unknown: `name one of ${ALLOWED_ISSUES.map((n) => `#${n}`).join(', ')}`,
 };
