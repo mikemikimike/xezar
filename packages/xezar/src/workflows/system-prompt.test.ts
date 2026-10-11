@@ -18,6 +18,7 @@ import {
   skillSystemPrompt,
 } from './run.ts';
 import { TEST_DIR_RM_OPTIONS } from '../../test/helpers/platform.ts';
+import { rmTestDirExplained } from '../../test/helpers/rm-explained.ts';
 
 const run = promisify(execFile);
 const GIT_ID = ['-c', 'user.name=test', '-c', 'user.email=test@local'];
@@ -188,7 +189,7 @@ describe('systemPrompt end-to-end (dry run)', () => {
     store.flush();
     // The namer is not waited for (`autoNameRun`): its mock may still work in the folder for up to
     // NAMER_TIMEOUT_MS (20 s), which Windows refuses to remove. Windows retries for about 25 s.
-    rmSync(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 22, retryDelay: 100 });
+    rmTestDirExplained(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 22, retryDelay: 100 });
   });
 
   // Agent step + trailing check so the agent step is non-interactive — the
@@ -527,7 +528,7 @@ describe('the global follow-up gate (dry run)', () => {
     store.flush();
     // The namer is not waited for (`autoNameRun`): its mock may still work in the folder for up to
     // NAMER_TIMEOUT_MS (20 s), which Windows refuses to remove. Windows retries for about 25 s.
-    rmSync(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 22, retryDelay: 100 });
+    rmTestDirExplained(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 22, retryDelay: 100 });
   });
 
   const workflow: WorkflowDef = {
