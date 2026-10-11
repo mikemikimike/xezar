@@ -59,7 +59,8 @@ describe('the MCP pipe rendezvous, Windows rules on every OS (#963)', () => {
   afterEach(() => {
     for (const handle of handles.splice(0)) handle.close();
     for (const server of servers.splice(0)) server.close();
-    rmSync(home, TEST_DIR_RM_OPTIONS);
+    // A close removes its files after taking the pipe lock, so the folder may still be emptying.
+    rmSync(home, { ...TEST_DIR_RM_OPTIONS, maxRetries: 10, retryDelay: 100 });
     rmSync(sockets, TEST_DIR_RM_OPTIONS);
   });
 
