@@ -186,7 +186,8 @@ describe('systemPrompt end-to-end (dry run)', () => {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    store.flush();
+    // Closed, not only flushed: a closed store writes nothing more into the folder removed below.
+    await store.close();
     // The namer is not waited for (`autoNameRun`): its mock may still work in the folder for up to
     // NAMER_TIMEOUT_MS (20 s), which Windows refuses to remove. Windows retries for about 25 s.
     rmTestDirExplained(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 22, retryDelay: 100 });
@@ -525,7 +526,8 @@ describe('the global follow-up gate (dry run)', () => {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    store.flush();
+    // Closed, not only flushed: a closed store writes nothing more into the folder removed below.
+    await store.close();
     // The namer is not waited for (`autoNameRun`): its mock may still work in the folder for up to
     // NAMER_TIMEOUT_MS (20 s), which Windows refuses to remove. Windows retries for about 25 s.
     rmTestDirExplained(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 22, retryDelay: 100 });
