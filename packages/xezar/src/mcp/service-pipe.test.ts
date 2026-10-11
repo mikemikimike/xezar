@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { createConnection, createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -56,10 +56,15 @@ describe('the MCP pipe rendezvous, Windows rules on every OS (#963)', () => {
     mkdirSync(project.root);
     foreignStart = null;
   });
-  afterEach(() => {
+  afterEach(async () => {
+    const closing = handles.length > 0;
     for (const handle of handles.splice(0)) handle.close();
     for (const server of servers.splice(0)) server.close();
-    // A close removes its files after taking the pipe lock, so the folder may still be emptying.
+    // A close removes its files under the pipe lock, after it returns: wait until that lock is gone.
+    if (closing) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await vi.waitFor(() => expect(existsSync(files().lock)).toBe(false), { timeout: 15_000 });
+    }
     rmSync(home, { ...TEST_DIR_RM_OPTIONS, maxRetries: 10, retryDelay: 100 });
     rmSync(sockets, TEST_DIR_RM_OPTIONS);
   });
