@@ -7,6 +7,7 @@ import { LineFramer, encodeFrame } from './ipc.ts';
 import { SERVER_CAPABILITIES } from './protocol.ts';
 import { shortTmpRoot, onWindows } from '../../test/helpers/platform.ts';
 import { samePath } from '../platform/path-identity.ts';
+import { windowsElevated } from '../../test/helpers/windows-elevation.ts';
 
 // #86 acceptance, against the REAL CLI: `xez serve` and `xez mcp` as separate
 // processes, exactly as a coding agent would meet them. `--import tsx` rather than
@@ -150,7 +151,8 @@ const DOOR_SUFFIX = onWindows ? '.pipe' : '.sock';
 
 const text = (m: Record<string, unknown>) => (m.result as { content: Array<{ text: string }> }).content[0]?.text ?? '';
 
-describe('xez mcp against a real xezar (#86 acceptance)', () => {
+// win32-skip(#980): the real xezar is its own process, which refuses its MCP pipe when elevated, as every GitHub Windows runner step is
+describe.skipIf(windowsElevated())('xez mcp against a real xezar (#86 acceptance)', () => {
   it('completes the MCP handshake against a running XEZ_DRY_RUN cockpit and reaches its project', async () => {
     await serve();
     const socket = await until('the MCP socket', async () => {
