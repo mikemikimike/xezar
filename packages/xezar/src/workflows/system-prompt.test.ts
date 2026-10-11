@@ -192,10 +192,11 @@ describe('systemPrompt end-to-end (dry run)', () => {
     }
     // Closed, not only flushed: a closed store writes nothing more into the folder removed below.
     await store.close();
-    // The namer is not waited for (`autoNameRun`): its mock may still work in the folder for up to
-    // two attempts of NAMER_TIMEOUT_MS (20 s) each, which Windows refuses to remove. Windows
-    // retries for about 60 s (CI measured a namer still alive after 25 s).
-    rmTestDirExplained(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 34, retryDelay: 100 });
+    // The namer is not part of quiesce (`autoNameRun`): its mock works in the folder until it
+    // answers, which Windows refuses to remove (CI saw one alive after a 60 s retry window), so
+    // wait for it. Its process exits just after it answers: Windows retries for about 25 s.
+    await manager.namingSettled();
+    rmTestDirExplained(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 22, retryDelay: 100 });
   }, onWindows ? 90_000 : undefined);
 
   // Agent step + trailing check so the agent step is non-interactive — the
@@ -533,10 +534,11 @@ describe('the global follow-up gate (dry run)', () => {
     }
     // Closed, not only flushed: a closed store writes nothing more into the folder removed below.
     await store.close();
-    // The namer is not waited for (`autoNameRun`): its mock may still work in the folder for up to
-    // two attempts of NAMER_TIMEOUT_MS (20 s) each, which Windows refuses to remove. Windows
-    // retries for about 60 s (CI measured a namer still alive after 25 s).
-    rmTestDirExplained(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 34, retryDelay: 100 });
+    // The namer is not part of quiesce (`autoNameRun`): its mock works in the folder until it
+    // answers, which Windows refuses to remove (CI saw one alive after a 60 s retry window), so
+    // wait for it. Its process exits just after it answers: Windows retries for about 25 s.
+    await manager.namingSettled();
+    rmTestDirExplained(repoRoot, TEST_DIR_RM_OPTIONS.maxRetries === undefined ? TEST_DIR_RM_OPTIONS : { ...TEST_DIR_RM_OPTIONS, maxRetries: 22, retryDelay: 100 });
   }, onWindows ? 90_000 : undefined);
 
   const workflow: WorkflowDef = {
