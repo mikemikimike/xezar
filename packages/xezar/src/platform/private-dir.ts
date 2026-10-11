@@ -209,6 +209,10 @@ async function windowsCheck(paths: readonly string[], ensure: boolean, deps: Pri
   const report = parseAclReport(text);
   if (deps.run === undefined && report.elevated === true && report.sid !== undefined && elevatedCountsAsStandard()) {
     asStandardAccount(report, report.sid);
+    const verdict = judgeAclReport(report, paths);
+    // A CI runner's account is not one we can inspect by hand: say what the check saw.
+    if (!verdict.ok) return { ...verdict, message: `${verdict.message} [test: sddl ${[...report.sddl.values()].join(' | ')}; sid suffix ${report.sid.split('-').pop()}]` };
+    return verdict;
   }
   return judgeAclReport(report, paths);
 }
@@ -224,11 +228,17 @@ function elevatedCountsAsStandard(): boolean {
   return (globalThis as Record<symbol, unknown>)[ELEVATED_AS_STANDARD_FOR_TESTS] === true;
 }
 
-/** What the report would say for a standard account: not elevated, and what the elevated process
- *  created (owned by Administrators) owned by the user. */
+/** What the report would say for a standard account: not elevated, what the elevated process
+ *  created owned by the user (an elevated token's default owner is Administrators, or the account
+ *  itself), and the built-in Administrator's own alias `LA` spelled as its SID. */
 function asStandardAccount(report: AclReport, sid: string): void {
   report.elevated = false;
-  for (const [index, sddl] of report.sddl) report.sddl.set(index, sddl.replace(/^O:(?:BA|S-1-5-32-544)(?=G:|D:)/, `O:${sid}`));
+  const builtIn = sid.endsWith('-500');
+  for (const [index, sddl] of report.sddl) {
+    let text = sddl.replace(/^O:(?:[A-Z]{2}|S-1-[\d-]+)(?=G:|D:)/, `O:${sid}`);
+    if (builtIn) text = text.replace(/;LA\)/g, `;${sid})`);
+    report.sddl.set(index, text);
+  }
 }
 
 /**
