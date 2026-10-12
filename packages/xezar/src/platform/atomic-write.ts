@@ -5,8 +5,9 @@
  * it over the target. On Linux and macOS the rename is made exactly ONCE and its error is rethrown
  * untouched – the behavior every call site had before this module. On Windows another program
  * (antivirus, search indexing, a backup tool) often holds a just-written file for a few
- * milliseconds, and a file marked read-only refuses to be replaced, so there – and only there – a
- * refused rename is retried for about a second and a read-only target is made writable first.
+ * milliseconds – on a loaded machine for over a second – and a file marked read-only refuses to be
+ * replaced, so there – and only there – a refused rename is retried for about three seconds and a
+ * read-only target is made writable first.
  *
  * No `mkdir`, no `fsync`, no sandbox assertion: those stay each caller's own decision.
  *
@@ -19,10 +20,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 /** The rename errors Windows returns while another program holds the file. */
 export const RENAME_RETRY_CODES: ReadonlySet<string> = new Set(['EPERM', 'EBUSY', 'EACCES']);
-/** Waits between attempts on Windows: at most 8 attempts and 810 ms of sleeping. */
-export const RENAME_RETRY_WAITS_MS: readonly number[] = [10, 20, 40, 80, 160, 250, 250];
+/** Waits between attempts on Windows: at most 12 attempts and 2810 ms of sleeping. One second
+ *  (the first 8) ran out on a busy CI machine while antivirus held a just-written file (#963). */
+export const RENAME_RETRY_WAITS_MS: readonly number[] = [10, 20, 40, 80, 160, 250, 250, 500, 500, 500, 500];
 /** No wait may take the whole retry past this, measured from the first attempt. */
-export const RENAME_RETRY_BUDGET_MS = 1_000;
+export const RENAME_RETRY_BUDGET_MS = 3_000;
 export const RENAME_HELD_HINT = 'another program such as antivirus or search indexing may be holding it';
 
 type SyncFs = Pick<typeof fs, 'renameSync' | 'lstatSync' | 'chmodSync' | 'unlinkSync' | 'writeFileSync'>;

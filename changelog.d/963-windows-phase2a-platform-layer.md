@@ -33,7 +33,7 @@
   project, clone and the folder settings accept these paths. Two spellings of one folder, such as
   `c:\Repo` and `C:\repo`, count as one project. Linux and macOS are unchanged. (#963)
 - 🐛 **Saving on Windows survives a briefly locked file.** When antivirus or search indexing holds a
-  file xezar is replacing, xezar retries for up to about a second, and it replaces a file marked
+  file xezar is replacing, xezar retries for up to about three seconds, and it replaces a file marked
   read-only, as Linux and macOS already do. If the file stays locked, the error names it and the
   likely cause. Linux and macOS still make one attempt. On every system, a save that fails now
   removes its temporary file instead of leaving it next to the file it was replacing. (#963)

@@ -104,15 +104,15 @@ describe.each(both)('renameReplacing (%s)', (_name, run) => {
     expect(h.sleeps).toEqual([10, 20]);
   });
 
-  it('stops after 8 attempts with an error that names the file, the attempts and the likely cause', async () => {
+  it('stops after 12 attempts with an error that names the file, the attempts and the likely cause', async () => {
     const original = fsError('EPERM');
     const h = harness([original]);
     const target = 'C:\\state\\config.json';
     const error = (await run(h, target).then(() => undefined, (e: unknown) => e)) as NodeJS.ErrnoException;
-    expect(h.renames).toBe(8);
+    expect(h.renames).toBe(12);
     expect(h.sleeps).toEqual([...RENAME_RETRY_WAITS_MS]);
-    expect(h.sleeps.reduce((a, b) => a + b, 0)).toBe(810);
-    expect(error.message).toBe(`could not replace ${target} after 8 attempts (EPERM): ${RENAME_HELD_HINT}. Try again in a moment.`);
+    expect(h.sleeps.reduce((a, b) => a + b, 0)).toBe(2810);
+    expect(error.message).toBe(`could not replace ${target} after 12 attempts (EPERM): ${RENAME_HELD_HINT}. Try again in a moment.`);
     expect(error.code).toBe('EPERM');
     expect(error.syscall).toBe('rename');
     expect(error.cause).toBe(original);
@@ -120,7 +120,7 @@ describe.each(both)('renameReplacing (%s)', (_name, run) => {
 
   it('never waits past the time budget', async () => {
     // The clock jumps near the budget after the second attempt: the next wait would pass it.
-    const h = harness([fsError('EBUSY')], { now: (state) => (state.renames >= 2 ? 995 : 0) });
+    const h = harness([fsError('EBUSY')], { now: (state) => (state.renames >= 2 ? 2995 : 0) });
     const error = (await run(h).then(() => undefined, (e: unknown) => e)) as NodeJS.ErrnoException;
     expect(h.renames).toBe(2);
     expect(h.sleeps).toEqual([10]);
@@ -156,7 +156,7 @@ describe.each(both)('renameReplacing (%s)', (_name, run) => {
     const h = harness([fsError('EPERM')], { lstat: fakeStats(0o100444) });
     await expect(run(h)).rejects.toMatchObject({ code: 'EPERM' });
     expect(h.chmods).toEqual([['to', 0o666], ['to', 0o444]]);
-    expect(h.renames).toBe(9); // one immediate retry after clearing, then the eight bounded ones
+    expect(h.renames).toBe(13); // one immediate retry after clearing, then the twelve bounded ones
     expect(h.sleeps).toEqual([...RENAME_RETRY_WAITS_MS]);
   });
 
