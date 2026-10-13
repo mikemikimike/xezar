@@ -359,7 +359,8 @@ describe('attaching pi with no leader extension running (#330 WP2)', () => {
     made.sessionOpened('session-1');
     const attached = await made.act({ action: 'attach', client: 'pi' });
     expect(attached.ok).toBe(false);
-    expect(attached.ok === false && attached.error).toMatch(/stdin and stdout/);
+    // Windows names why no pi leader can attach there yet, and leaves out the extension advice (#963).
+    expect(attached.ok === false && attached.error).toMatch(onWindows ? /not available on this system yet\)\. Events stay/ : /stdin and stdout/);
     // Nothing was attached, so the status still says there is no leader — never a leader that
     // cannot be reached being reported as one that can.
     const status = made.status();
