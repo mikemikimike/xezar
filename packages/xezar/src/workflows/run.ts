@@ -1318,7 +1318,12 @@ export class RunManager {
       state.memoryLimitPause = `memory limit exceeded (${usedMb} MiB > ${limitMb} MiB)`;
       state.stopReason = 'memory-limit';
       this.clearIdleTimer(state);
-      state.session.end();
+      const session = state.session;
+      // macOS reads the tree once first, so what the agent started since the last sampler read
+      // is still the run's when the sweep runs (#963); elsewhere the close is immediate, as before.
+      const fresh = this.runProcesses.beforeStop(runId);
+      if (fresh === undefined) session.end();
+      else void fresh.then(() => session.end());
     }
   }
 
@@ -2440,7 +2445,12 @@ export class RunManager {
     state.cancelled = true;
     state.stopReason = 'cancel';
     this.clearIdleTimer(state);
-    state.interrupt();
+    // macOS reads the tree once first (#963, see `RunProcessSweeper.beforeStop`); elsewhere the
+    // interrupt is immediate, as before. `interrupt` is read when it fires: a step change meanwhile
+    // points it at the session that is running then.
+    const fresh = this.runProcesses.beforeStop(runId);
+    if (fresh === undefined) state.interrupt();
+    else void fresh.then(() => state.interrupt());
     return true;
   }
 

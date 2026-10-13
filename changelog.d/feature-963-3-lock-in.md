@@ -29,6 +29,10 @@
 - 🐛 **Two tasks that start at the same moment no longer fail with "failed to read …/commondir".**
   Git could read the other task's working copy (Git worktree) while it was still being made. xezar
   now tries once more a moment later. (#963)
+- 🐛 **macOS: cancelling or pausing a task stops the programs its agent had just started.** A
+  program started in the last two seconds before the stop, such as a shell command OpenCode had
+  just begun, was left running. xezar now looks at the task's processes once more before it stops
+  the task. (#963)
 - 🐛 **`--output lines` writes whole lines to a file or a pipe.** A long message, such as the reason
   the MCP leader bridge is unavailable, used to end in `…` at 80 characters even in a log file, where
   nothing could show the rest. Lines are now cut only on a terminal. (#963)
