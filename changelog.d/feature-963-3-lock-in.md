@@ -29,3 +29,6 @@
 - 🐛 **Two tasks that start at the same moment no longer fail with "failed to read …/commondir".**
   Git could read the other task's working copy (Git worktree) while it was still being made. xezar
   now tries once more a moment later. (#963)
+- 🐛 **`--output lines` writes whole lines to a file or a pipe.** A long message, such as the reason
+  the MCP leader bridge is unavailable, used to end in `…` at 80 characters even in a log file, where
+  nothing could show the rest. Lines are now cut only on a terminal. (#963)

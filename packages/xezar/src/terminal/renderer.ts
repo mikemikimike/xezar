@@ -236,8 +236,12 @@ export class TerminalRenderer {
       ];
       return [`${formatIsoTime(entry.at)} ${logfmt(fields)}`];
     }
-    const options = { columns: this.columns, glyphs: this.glyphs, time: formatLocalTime(entry.at) };
-    const stacked = this.columns < STACKED_COLUMNS;
+    // Only a terminal has a width to keep to. In a file or a pipe there is no screen to overflow
+    // and no live region to push away, and a cut message is lost for good (#963: the reason MCP
+    // was unavailable ended in `…`), so the line is written whole.
+    const columns = this.stream.isTTY === true ? this.columns : Number.POSITIVE_INFINITY;
+    const options = { columns, glyphs: this.glyphs, time: formatLocalTime(entry.at) };
+    const stacked = columns < STACKED_COLUMNS;
     const lines = stacked ? formatStackedEntry(entry, options) : formatWideEntry(entry, options);
     const kind = stacked ? ('entry-stacked' as const) : ('entry-wide' as const);
     return lines.map((line, index) =>

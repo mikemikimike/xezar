@@ -246,6 +246,29 @@ describe('lines output in a file', () => {
     expect(stream.text).toContain('started — implement · Codex');
     expect(stream.text).not.toContain(`${ESC}[`);
   });
+
+  // #963: the reason MCP was unavailable ended in `…` in a log file, where nothing can show the rest.
+  const LONG = `unavailable — The private folder ${'C:\\a-long-folder'.repeat(8)}\\ipc cannot be used while xezar runs as administrator; start it without elevation. The cockpit works without it.`;
+
+  it('writes a long message whole, at any width, because a file has no screen to keep to', () => {
+    for (const columns of [80, 40]) {
+      const stream = new FakeStream({ isTTY: false });
+      const { renderer } = makeRenderer({ stream, mode: 'lines', columns });
+      renderer.log(info(LONG));
+      expect(stream.text).toContain(LONG);
+      expect(stream.text).not.toContain('…');
+      expect(stream.text.trimEnd().split('\n')).toHaveLength(1);
+    }
+  });
+
+  it('still cuts a long message on a terminal, where the line must fit the screen', () => {
+    const stream = new FakeStream({ isTTY: true });
+    const { renderer, clock } = makeRenderer({ stream, mode: 'lines', columns: 80 });
+    renderer.log(info(LONG));
+    clock.advance(REDRAW_INTERVAL_MS);
+    expect(stream.text).not.toContain(LONG);
+    expect(stream.text).toContain('…');
+  });
 });
 
 describe('the live region — AC-08', () => {
