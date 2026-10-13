@@ -2,9 +2,8 @@
 
 - 🔧 **Windows is supported natively.** The install notes no longer say "in progress" or send
   Windows users to WSL. They list what Windows needs: the full Git for Windows (its Git Bash runs
-  workflow check steps), long paths turned on, and xezar started without administrator rights for
-  the MCP leader bridge. Attaching a running Codex session or a pi leader is not available on
-  Windows yet. (#963)
+  workflow check steps) and long paths turned on; the MCP limits on Windows are listed under
+  Changed. (#963)
 
 ## 🐛 Fixes
 
@@ -31,8 +30,8 @@
   now tries once more a moment later. (#963)
 - 🐛 **macOS: cancelling or pausing a task stops the programs its agent had just started.** A
   program started in the last two seconds before the stop, such as a shell command OpenCode had
-  just begun, was left running. xezar now looks at the task's processes once more before it stops
-  the task. (#963)
+  just begun, was left running. xezar now reads the task's processes once more, for at most two seconds,
+  before it stops the task; a step's time limit is unchanged. (#963)
 - 🐛 **`--output lines` writes whole lines to a file or a pipe.** A long message, such as the reason
   the MCP leader bridge is unavailable, used to end in `…` at 80 characters even in a log file, where
   nothing could show the rest. Lines are now cut only on a terminal. (#963)

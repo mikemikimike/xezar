@@ -9,7 +9,8 @@ Tracked in [#881](https://github.com/qodeca/xezar/issues/881).
 
 On Windows, `xezar serve` stops the programs its tracked children started before it exits (see
 `packages/xezar/src/AGENTS.md` § Platform layer, Processes). On Linux and macOS the exit is still
-immediate: what the children started at shutdown is not stopped.
+immediate: what the children started is not stopped at shutdown. For runs still marked `running`,
+the next start stops those leftovers before the task resumes (#982).
 
 ## Write sites still using a plain rename
 
@@ -17,7 +18,7 @@ Tracked in [#978](https://github.com/qodeca/xezar/issues/978).
 
 New write-then-rename sites use `writeFileAtomic` / `writeFileAtomicSync`. One known exception
 has not been migrated yet and still uses a plain rename:
-`packages/xezar/scripts/pi-leader-extension.ts`, which moves with the pi leader on Windows.
+`packages/xezar/scripts/pi-leader-extension.ts`, which migrates when the pi leader comes to Windows (#978; the extension does not run there yet).
 
 The test scripts `packages/xezar/scripts/mock-claude.mjs` and
 `packages/xezar/scripts/multi-project-harness.mjs` cannot import the platform layer, so each

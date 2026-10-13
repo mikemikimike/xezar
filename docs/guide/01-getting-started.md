@@ -78,6 +78,12 @@ In a POSIX shell, start the cockpit with the bundled mock agent:
 XEZ_DRY_RUN=1 npx @qodeca/xezar
 ```
 
+In PowerShell:
+
+```powershell
+$env:XEZ_DRY_RUN=1; npx @qodeca/xezar
+```
+
 Create a task to see the mock event stream without invoking a real agent CLI. This exercises the cockpit, not a real model's ability to complete your task. Restart without `XEZ_DRY_RUN=1` when you want real agent work.
 
 ## To let an agent set up this project (optional)

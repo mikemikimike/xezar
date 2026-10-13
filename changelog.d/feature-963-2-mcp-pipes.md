@@ -12,5 +12,3 @@
 - 🔧 **Windows: attaching to a running Codex session or a pi leader is not available yet.** Each
   attempt fails at once with a clear message instead of a socket error. pi and Codex as task backends
   are not affected. (#963)
-- 🔧 **The MCP connection file is written atomically.** A reader never sees a half-written file, and
-  on Windows the write retries a briefly locked file. (#963)
