@@ -304,7 +304,9 @@ describe('a memory-limit pause stops what the run started (#943)', () => {
     expect(report.startsWith('Stopped ')).toBe(true);
     expect(report).toContain(` ${server} `);
     expect(report).toContain('xez-943-dev-server');
-    for (const decoy of decoys) expect(report).not.toContain(String(decoy));
+    // A whole number, not a substring: a decoy pid such as 2000 also sits inside the server's
+    // own command line (`120000`), which the report quotes.
+    for (const decoy of decoys) expect(report).not.toMatch(new RegExp(`(?<!\\d)${decoy}(?!\\d)`));
     const paused = events.findIndex((e) => e.type === 'lifecycle' && (e.message ?? '').startsWith('paused — memory limit exceeded'));
     expect(paused).toBeGreaterThanOrEqual(0);
     expect(paused).toBeLessThan(events.indexOf(reports[0]!));

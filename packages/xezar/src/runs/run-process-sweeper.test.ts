@@ -420,6 +420,52 @@ describe('RunProcessSweeper on macOS – the ledger, with POSIX signals', () => 
     expect(machine.signals).toEqual([[601, 'SIGTERM']]);
     expect(reports[0]![1]).toBe('Stopped 1 program this task started: 601 node dev.js.');
   });
+
+  /**
+   * #963, found on a Mac: the sampler reads every ~2 s, and a program the agent started after the
+   * last read was tied to the run only through its parent. A cancel stops that parent first, so the
+   * program was orphaned (ppid 1) before the sweep looked, and nothing proved it the run's.
+   */
+  it('a stop reads the tree first, so a program started after the last sampler read is still the run’s', async () => {
+    const { machine, sweeper, reports } = harness('darwin');
+    machine.add({ pid: 600, ppid: XEZAR, startedAt: T0, cmdline: 'opencode serve' });
+    sweeper.pinRoot(RUN, 600, T0);
+    machine.tick();
+    // after the last read: the agent's shell tool starts `sleep 120` in a group of its own
+    machine.add({ pid: 610, ppid: 600, startedAt: T0 + 9_000, cmdline: 'sleep 120' });
+    expect(sweeper.ledgerHas(RUN, 610)).toBe(false);
+
+    await sweeper.beforeStop(RUN);
+    expect(sweeper.ledgerHas(RUN, 610)).toBe(true);
+    // the interrupt ends the server; its child lives on, reparented to launchd
+    machine.processes.get(600)!.alive = false;
+    machine.processes.get(610)!.ppid = 1;
+    await settle(sweeper.now(RUN, 'cancel'));
+    expect(machine.signals).toEqual([[610, 'SIGTERM']]);
+    expect(reports).toEqual([[RUN, 'Stopped 1 program this task started: 610 sleep 120.']]);
+  });
+
+  it('guard: without that read the orphan proves nothing, which is why the stop waits for it', async () => {
+    const { machine, sweeper, reports } = harness('darwin');
+    machine.add({ pid: 600, ppid: XEZAR, startedAt: T0 });
+    sweeper.pinRoot(RUN, 600, T0);
+    machine.tick();
+    machine.add({ pid: 610, ppid: 1, startedAt: T0 + 9_000, cmdline: 'sleep 120' });
+    machine.processes.get(600)!.alive = false;
+    await settle(sweeper.now(RUN, 'cancel'));
+    expect(machine.signals).toEqual([]);
+    expect(reports).toEqual([]);
+  });
+
+  it('beforeStop answers undefined, so the stop stays immediate, on Linux, on Windows and without a ledger', () => {
+    for (const platform of ['linux', 'win32'] as const) {
+      const { machine, sweeper } = harness(platform);
+      machine.add({ pid: 600, ppid: XEZAR, startedAt: T0 });
+      sweeper.pinRoot(RUN, 600, T0);
+      expect(sweeper.beforeStop(RUN), platform).toBeUndefined();
+    }
+    expect(harness('darwin').sweeper.beforeStop(RUN)).toBeUndefined();
+  });
 });
 
 describe('RunProcessSweeper – one sweep per run', () => {

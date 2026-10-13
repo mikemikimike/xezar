@@ -55,7 +55,8 @@ export class AutomationCoordinator {
     const projectRoot = root ?? this.roots.get(projectId);
     if (!projectRoot) return undefined;
     try {
-      ownProjectData(projectDataDir(projectRoot));
+      // Synchronous here, so never the blocking Windows start-time check (#963).
+      ownProjectData(projectDataDir(projectRoot), { claimCheck: 'remembered' });
     } catch (error) {
       this.options.warn?.(`Automation project is unavailable: ${error instanceof Error ? error.message : String(error)}`);
       return undefined;

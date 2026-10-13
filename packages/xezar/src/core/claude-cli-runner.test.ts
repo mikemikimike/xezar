@@ -227,7 +227,7 @@ describe('a teardown xezar initiated', () => {
       uiEvents.some((event) => event.type === 'turn.completed' && event.stopReason === 'error'),
     ).toBe(false);
     expect(events.at(-1)).toEqual({ type: 'done' });
-    // win32-skip(#963): a Windows stop kills the stub at once, before it writes its closing turn,
+    // win32-skip(#974): a Windows stop kills the stub at once, before it writes its closing turn,
     // and Node reports that kill as exit code null, so no exit code reaches the note
     if (!onWindows) {
       expect(uiEvents).toContainEqual({
@@ -248,6 +248,9 @@ describe('a teardown xezar initiated', () => {
  * that handles and ignores SIGTERM alive, with `session.result` waiting for it.
  */
 describe('wall-clock timeout for a real Claude child that ignores SIGTERM', () => {
+  // Long enough for the stub to install its SIGTERM handler first; at 100 ms a slow runner
+  // sent SIGTERM before the handler existed, and the child simply died (#963).
+  const TIMEOUT_MS = 2_000;
   it(
     'keeps the SIGKILL escalation armed until the child exits',
     async () => {
@@ -255,7 +258,7 @@ describe('wall-clock timeout for a real Claude child that ignores SIGTERM', () =
         new URL('./__fixtures__/claude/stub-ignores-eof-exits-143.mjs', import.meta.url),
       );
       const events: AgentEvent[] = [];
-      const session = new ClaudeCliRunner({ bin: stubBin, timeoutMs: 100 }).startSession(
+      const session = new ClaudeCliRunner({ bin: stubBin, timeoutMs: TIMEOUT_MS }).startSession(
         {
           userPrompt: 'do it',
           cwd: process.cwd(),
@@ -270,13 +273,13 @@ describe('wall-clock timeout for a real Claude child that ignores SIGTERM', () =
         const result = await Promise.race([
           session.result,
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('session stayed pending after the SIGKILL grace period')), 13_000),
+            setTimeout(() => reject(new Error('session stayed pending after the SIGKILL grace period')), TIMEOUT_MS + KILL_GRACE_MS + 3_000),
           ),
         ]);
 
-        // win32-skip(#963): Windows has no catchable SIGTERM, so there is no SIGKILL escalation to wait for
-        if (!onWindows) expect(Date.now() - startedAt).toBeGreaterThanOrEqual(KILL_GRACE_MS - 500);
-        // Windows kills at the 100 ms limit, often before the stub wrote its text (#963).
+        // win32-skip(#974): Windows has no catchable SIGTERM, so there is no SIGKILL escalation to wait for
+        if (!onWindows) expect(Date.now() - startedAt).toBeGreaterThanOrEqual(TIMEOUT_MS + KILL_GRACE_MS - 500);
+        // Windows kills at the time limit, sometimes before the stub wrote its text (#963).
         if (onWindows) expect(['', 'work done']).toContain(result.text);
         else expect(result.text).toBe('work done');
         expect(result.timedOut).toBe(true); // #943: the run manager sweeps after a timeout
@@ -296,7 +299,7 @@ describe('wall-clock timeout for a real Claude child that ignores SIGTERM', () =
         }
       }
     },
-    15_000,
+    TIMEOUT_MS + KILL_GRACE_MS + 8_000,
   );
 });
 
@@ -409,6 +412,7 @@ describe('SIGTERM→SIGKILL escalation for a CLI that survives SIGTERM', () => {
  * grandchild (a non-detached Node grandchild dies with its parent on Windows, so it would prove
  * nothing), both ignore stdin EOF, and the EOF watchdog's stop must end both.
  */
+// win32-skip(#976): a Windows tree stop with real processes runs on Windows only; the POSIX stop is pinned above
 describe.runIf(onWindows)('a Windows stop reaches what the CLI started (#963)', () => {
   const stubBin = fileURLToPath(new URL('./__fixtures__/claude/stub-spawns-grandchild.mjs', import.meta.url));
   /** The EOF watchdog's SIGTERM, then the tree stop's own worst case – its one PowerShell (table

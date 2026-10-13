@@ -1318,7 +1318,12 @@ export class RunManager {
       state.memoryLimitPause = `memory limit exceeded (${usedMb} MiB > ${limitMb} MiB)`;
       state.stopReason = 'memory-limit';
       this.clearIdleTimer(state);
-      state.session.end();
+      const session = state.session;
+      // macOS reads the tree once first, so what the agent started since the last sampler read
+      // is still the run's when the sweep runs (#963); elsewhere the close is immediate, as before.
+      const fresh = this.runProcesses.beforeStop(runId);
+      if (fresh === undefined) session.end();
+      else void fresh.then(() => session.end());
     }
   }
 
@@ -1469,7 +1474,7 @@ export class RunManager {
     // Fire-and-forget LLM naming (task auto-naming spec): the heuristic title
     // above shows instantly; the namer's short title replaces it when (and if)
     // the model answers. Never awaited, never fails the run.
-    void this.autoNameRun(run.id, skillHint, input.task);
+    this.startNaming(this.autoNameRun(run.id, skillHint, input.task));
     this.pendingJobs.set(run.id, { workflow, input: effectiveInput });
     this.queue.push(run.id);
     void this.pump();
@@ -2440,7 +2445,12 @@ export class RunManager {
     state.cancelled = true;
     state.stopReason = 'cancel';
     this.clearIdleTimer(state);
-    state.interrupt();
+    // macOS reads the tree once first (#963, see `RunProcessSweeper.beforeStop`); elsewhere the
+    // interrupt is immediate, as before. `interrupt` is read when it fires: a step change meanwhile
+    // points it at the session that is running then.
+    const fresh = this.runProcesses.beforeStop(runId);
+    if (fresh === undefined) state.interrupt();
+    else void fresh.then(() => state.interrupt());
     return true;
   }
 
@@ -4879,7 +4889,29 @@ export class RunManager {
     this.lastNamerKey.set(runId, key);
     const workflow = await this.reviveWorkflow(run);
     const skillName = workflow?.steps.find((s) => stepKind(s) === 'agent' && s.skill)?.skill?.trim();
-    void this.autoNameRun(runId, skillName, run.task, { turnText, diffStat: statText });
+    this.startNaming(this.autoNameRun(runId, skillName, run.task, { turnText, diffStat: statText }));
+  }
+
+  /** The namer calls still running; only `namingSettled()` reads it. */
+  private readonly namingInFlight = new Set<Promise<void>>();
+
+  private startNaming(naming: Promise<void>): void {
+    this.namingInFlight.add(naming);
+    const forget = (): void => {
+      this.namingInFlight.delete(naming);
+    };
+    naming.then(forget, forget);
+  }
+
+  /**
+   * Resolves once every namer call started so far has finished – within its own
+   * `NAMER_TIMEOUT_MS` per attempt. Neither `dispose()` nor `quiesce()` waits for the namer (see
+   * `autoNameRun`); this is for a caller that must know its agent process has ended, such as a
+   * test removing the project folder, which Windows refuses while the process works in it (#963).
+   * Never rejects.
+   */
+  async namingSettled(): Promise<void> {
+    while (this.namingInFlight.size > 0) await Promise.allSettled([...this.namingInFlight]);
   }
 
   /**

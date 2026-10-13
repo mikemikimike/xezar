@@ -37,6 +37,17 @@ afterEach(async () => {
   await rm(dir, TEST_DIR_RM_OPTIONS);
 });
 
+/** A beat rewrites the lock in place (`truncate` then `write`), so a read can land in between and
+ *  see a part of it. Read again until all three fields are there (#963). */
+async function readWholeLock(path: string): Promise<string> {
+  for (let attempt = 0; ; attempt += 1) {
+    const text = await readFile(path, 'utf8');
+    const [pid, stamp, token] = text.trim().split(/\s+/);
+    if ((pid && Number.isFinite(Number(stamp)) && token) || attempt >= 200) return text;
+    await new Promise((done) => setTimeout(done, 1));
+  }
+}
+
 /**
  * The pid of a process that really ran and really exited — what a `kill -9`ed gate run leaves
  * written in its lock file. Awaited on the child's own `close`, so the pid is dead by the time it
@@ -106,7 +117,8 @@ describe('acquireGateLease', () => {
     await first.release();
     const second = await queued;
     try {
-      expect(second.held).toBe(true);
+      // The outcome and reason name the cause if this ever fails again (#963).
+      expect({ held: second.held, outcome: second.outcome, reason: second.reason }).toMatchObject({ held: true });
       expect(second.slot).toBe(1);
       expect(events.some((e) => e.type === 'acquired')).toBe(true);
     } finally {
@@ -228,7 +240,7 @@ describe('acquireGateLease', () => {
       onEvent: (e) => { if (e.type === 'heartbeat') beats.push(e); },
     });
     try {
-      const before = await readFile(slotLockPath(dir, 1), 'utf8');
+      const before = await readWholeLock(slotLockPath(dir, 1));
       await new Promise<void>((done) => {
         const started = Date.now();
         const poll = setInterval(() => {
@@ -240,7 +252,7 @@ describe('acquireGateLease', () => {
         }, 1);
       });
       expect(beats.length).toBeGreaterThan(0);
-      const after = await readFile(slotLockPath(dir, 1), 'utf8');
+      const after = await readWholeLock(slotLockPath(dir, 1));
       const [pidBefore, stampBefore, tokenBefore] = before.trim().split(/\s+/);
       const [pidAfter, stampAfter, tokenAfter] = after.trim().split(/\s+/);
       // The stamp moved forward; the identity did not. A re-stamp that changed the token would
@@ -257,7 +269,7 @@ describe('acquireGateLease', () => {
     expect(GATE_LEASE_STALE_MS / GATE_LEASE_HEARTBEAT_MS).toBeGreaterThanOrEqual(3);
   });
 
-  // win32-skip(#963): Windows ignores POSIX mode bits, so a chmod'd read-only directory stays writable
+  // win32-skip(#972): Windows ignores POSIX mode bits, so a chmod'd read-only directory stays writable
   it.skipIf(onWindows)('(d) an unwritable lock directory reports itself and takes nothing', async () => {
     const readOnly = join(dir, 'read-only');
     await mkdir(readOnly);
@@ -411,7 +423,7 @@ describe('runUnderGateLease', () => {
     }
   });
 
-  // win32-skip(#963): Windows ignores POSIX mode bits, so a chmod'd read-only directory stays writable
+  // win32-skip(#972): Windows ignores POSIX mode bits, so a chmod'd read-only directory stays writable
   it.skipIf(onWindows)('an unusable directory runs the command anyway, loudly', async () => {
     const readOnly = join(dir, 'ro');
     await mkdir(readOnly);

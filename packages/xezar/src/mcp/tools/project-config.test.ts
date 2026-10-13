@@ -19,7 +19,7 @@ import { basename, join, relative, sep } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import { WORKFLOW_MAX_STEPS } from '@qodeca/xezar-contract';
-import { linkDir, TEST_DIR_RM_OPTIONS } from '../../../test/helpers/platform.ts';
+import { linkDir, onWindows, TEST_DIR_RM_OPTIONS } from '../../../test/helpers/platform.ts';
 import { CONFIG_FILES } from '../../agent-config/catalog.ts';
 import { loadConfig, resolveWorktreeRetention } from '../../config.ts';
 import { BUNDLED_TEMPLATES_DIGEST } from '../../onboarding/status.ts';
@@ -256,8 +256,10 @@ afterEach(() => {
     else process.env[key] = savedEnv[key];
   }
   for (const store of stores.splice(0)) store.close();
-  // A home's background team-skills clone may still be writing into it: retry briefly on every OS.
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { ...TEST_DIR_RM_OPTIONS, maxRetries: 10, retryDelay: 100 });
+  // A home's background team-skills clone may still be writing into it, and a loaded runner can
+  // hold a folder for longer: retry for about 9 s, or about 25 s on Windows – each inside its
+  // hook limit (#963).
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { ...TEST_DIR_RM_OPTIONS, maxRetries: onWindows ? 22 : 13, retryDelay: 100 });
 });
 
 /** The cockpit's own request: same-origin, from the loopback deployment a browser talks to. */

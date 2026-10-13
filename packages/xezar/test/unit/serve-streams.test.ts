@@ -112,7 +112,7 @@ function waitForOutput(
     if (settled) return;
     settled = true;
     cleanup();
-    rejectMatch(new Error(`timed out waiting for ${description}`));
+    rejectMatch(new Error(`timed out waiting for ${description}. Output so far:\n${read().slice(-4000)}`));
   }, 60_000);
   const cleanup = () => {
     clearTimeout(deadline);

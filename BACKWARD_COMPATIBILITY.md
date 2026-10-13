@@ -96,3 +96,10 @@ Each entry names the release, the surface it breaks, the symptom a user sees and
   skills from that source do not appear. *Way forward:* use an https or ssh address, or a local
   copy of the repository (`C:\…` or `file:///C:/…`). The owner approved this change without a §8
   deprecation notice (#963).
+- **0.20.0 – on Windows a workflow check step runs in Git Bash** (§4). A step with `command`
+  runs in Git for Windows' own Git Bash (`usr\bin\bash.exe -c`), found from the Git install,
+  instead of whatever `bash` the system finds first – on many machines WSL's. Linux and macOS
+  keep `bash -lc`. *Symptom:* on Windows a check that relied on the WSL environment (its Linux
+  tools or file system) behaves differently, and without Git Bash the step fails with a message
+  naming "Git for Windows (Git Bash)". *Way forward:* install the full Git for Windows, and write
+  check commands that work in Git Bash (#963).

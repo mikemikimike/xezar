@@ -181,6 +181,7 @@ describe('createWorktree recovery (real git)', () => {
 
   // #963 Q3: the repository root may arrive in another letter case (a typed path, Git's `C:/…`);
   // on Windows that is the same folder, so the registered worktree is reused, never re-added.
+  // win32-skip(#976): only Windows treats two letter cases as the same folder
   it.runIf(process.platform === 'win32')('reuses the task worktree when the repository root is spelled in another case', async () => {
     const repo = await fixtureRepo('xez-worktree-case-');
     const runId = '44444444-4444-4444-8444-444444444444';
@@ -189,6 +190,44 @@ describe('createWorktree recovery (real git)', () => {
     expect(again.path.toLowerCase()).toBe(first.path.toLowerCase());
     const listed = await run('git', ['worktree', 'list', '--porcelain'], { cwd: repo });
     expect(listed.stdout.match(new RegExp(`branch refs/heads/${branchFor(runId)}`, 'g'))).toHaveLength(1);
+  });
+
+  // #963: two tasks starting together – Git reads the other add's half-written entry and fails.
+  // An empty `commondir` is exactly what that reader sees.
+  it('retries once when another worktree add is still writing its entry', async () => {
+    const repo = await fixtureRepo('xez-worktree-race-');
+    const runId = '55555555-5555-4555-8555-555555555555';
+    const other = mkdtempSync(join(tmpdir(), 'xez-worktree-race-other-'));
+    worktreeRoots.push(other);
+    const entry = join(repo, '.git', 'worktrees', 'busy');
+    mkdirSync(entry, { recursive: true });
+    writeFileSync(join(other, '.git'), `gitdir: ${entry}\n`);
+    writeFileSync(join(entry, 'gitdir'), `${join(other, '.git')}\n`);
+    writeFileSync(join(entry, 'commondir'), '');
+    let retries = 0;
+
+    const made = await createWorktree(repo, runId, 'main', {
+      beforeRetry: async () => {
+        retries += 1;
+        writeFileSync(join(entry, 'commondir'), '../..\n');
+      },
+    });
+
+    expect(retries).toBe(1);
+    expect(made.branch).toBe(branchFor(runId));
+  });
+
+  it('does not retry any other worktree failure', async () => {
+    const repo = await fixtureRepo('xez-worktree-norace-');
+    let retries = 0;
+    await expect(
+      createWorktree(repo, '66666666-6666-4666-8666-666666666666', 'no-such-base', {
+        beforeRetry: async () => {
+          retries += 1;
+        },
+      }),
+    ).rejects.toThrow();
+    expect(retries).toBe(0);
   });
 
   it('preserves an unregistered non-empty managed path instead of deleting it', async () => {

@@ -3,11 +3,55 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
-import { onWindows, TEST_DIR_RM_OPTIONS } from '../helpers/platform.ts';
-/** The launcher under test is POSIX shell (test-env-up.sh / test-env-down.sh run by /bin/sh). */
-const NO_SH = onWindows ? 'win32-skip(#963): spawn /bin/sh fails ENOENT – the test-env launcher is a POSIX shell script' : false;
+import { gitRoot } from '../../src/platform/git-bash.ts';
+import { onWindows, plainMsysEnv, TEST_DIR_RM_OPTIONS } from '../helpers/platform.ts';
+
+/**
+ * The launcher under test is POSIX shell (test-env-up.sh / test-env-down.sh). POSIX runs it with
+ * /bin/sh, as before. Windows runs it with Git Bash's own `usr\bin\bash.exe`, the shell the
+ * launcher supports there (it detects MSYS itself).
+ */
+const gitBashRoot = onWindows ? gitRoot() : null;
+const SH = gitBashRoot ? join(gitBashRoot, 'usr', 'bin', 'bash.exe') : '/bin/sh';
+const NO_SH =
+  onWindows && !gitBashRoot ? 'win32-skip(#975): Git Bash was not found – the test-env launcher is a POSIX shell script' : false;
+/**
+ * One launcher run, and one test. A cold boot under Git Bash stops the old instance and starts
+ * xezar, which took 42 s for a whole test alone and ran past 20 s per run while the repository gate
+ * ran its other steps beside it (#963), so Windows gets more room. Linux and macOS keep theirs.
+ */
+const RUN_MS = onWindows ? 60_000 : 20_000;
+const TEST_MS = onWindows ? 240_000 : 60_000;
+
+/** A path handed to the shell as an argument. POSIX: unchanged. Windows: forward slashes, which
+ *  the MSYS `dirname` and `cd` read the same way as the native spelling. */
+function shellPath(path: string): string {
+  return onWindows ? path.replaceAll('\\', '/') : path;
+}
+
+/**
+ * The launcher's environment with only the fixture's tools on PATH. POSIX: the fixture's `bin`
+ * of links, exactly as before. Windows: the fixture's `bin` first (its `npm` and `agent-browser`
+ * stubs win), then Git Bash's tools, node's own folder and System32 (taskkill) – a Windows file
+ * symlink needs a privilege, and an MSYS program started through a link elsewhere would not find
+ * its runtime DLL. Every other spelling of PATH is dropped so exactly one reaches the shell.
+ */
+function fixtureEnv(path: string): NodeJS.ProcessEnv {
+  if (!onWindows || !gitBashRoot) return { ...process.env, PATH: path };
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(plainMsysEnv())) if (key.toUpperCase() !== 'PATH') env[key] = value;
+  const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
+  env.PATH = [
+    path,
+    join(gitBashRoot, 'usr', 'bin'),
+    join(gitBashRoot, 'mingw64', 'bin'),
+    dirname(process.execPath),
+    ...(systemRoot ? [join(systemRoot, 'System32')] : []),
+  ].join(';');
+  return env;
+}
 
 // The scripts under test are the REPO's, not this package's: test-env tooling spans every
 // workspace, so it stays at the root.
@@ -31,7 +75,7 @@ function commandPath(command: string): string {
   return execFileSync('/bin/sh', ['-c', `command -v ${command}`], { encoding: 'utf8' }).trim();
 }
 
-const hasSetsid = spawnSync('/bin/sh', ['-c', 'command -v setsid'], { stdio: 'ignore' }).status === 0;
+const hasSetsid = spawnSync(SH, ['-c', 'command -v setsid'], { stdio: 'ignore' }).status === 0;
 
 function makeFixture(withSetsid: boolean): { root: string; path: string } {
   const root = mkdtempSync(join(tmpdir(), 'xez-test-env-launcher-'));
@@ -41,14 +85,18 @@ function makeFixture(withSetsid: boolean): { root: string; path: string } {
   mkdirSync(join(root, 'bin'), { recursive: true });
   copyFileSync(join(repoRoot, 'scripts/test-env-up.sh'), join(root, 'scripts/test-env-up.sh'));
   copyFileSync(join(repoRoot, 'scripts/test-env-down.sh'), join(root, 'scripts/test-env-down.sh'));
+  copyFileSync(join(repoRoot, 'scripts/test-env-windows.mjs'), join(root, 'scripts/test-env-windows.mjs'));
   writeFileSync(join(root, 'docs/testing/agent-browser.md'), '# test provider\n');
   writeFileSync(join(root, 'package.json'), '{"private":true}\n');
   writeFileSync(join(root, 'package-lock.json'), '{}\n');
 
   const commands = ['cat', 'chmod', 'curl', 'date', 'dirname', 'find', 'grep', 'id', 'kill', 'mkdir', 'mv', 'nohup', 'pwd', 'rm', 'sh', 'sleep', 'tail', 'uname'];
   if (withSetsid) commands.push('setsid');
-  for (const command of commands) symlinkSync(commandPath(command), join(root, 'bin', command));
-  symlinkSync(process.execPath, join(root, 'bin/node'));
+  // Windows: Git Bash's tools stay where they are (see `fixtureEnv`).
+  if (!onWindows) {
+    for (const command of commands) symlinkSync(commandPath(command), join(root, 'bin', command));
+    symlinkSync(process.execPath, join(root, 'bin/node'));
+  }
 
   writeFileSync(
     join(root, 'bin/npm'),
@@ -200,13 +248,13 @@ async function freePort(): Promise<number> {
  *
  * This pins it deterministically by manufacturing the exact timing rather than racing for it.
  */
-test('reuses an instance whose sources were last touched inside the boot second', { timeout: 60_000, skip: NO_SH }, async () => {
+test('reuses an instance whose sources were last touched inside the boot second', { timeout: TEST_MS, skip: NO_SH }, async () => {
   const fixture = makeFixture(hasSetsid);
-  const env = { ...process.env, PATH: fixture.path, TEST_ENV_CACHE_TTL_SECONDS: '600' };
-  const up = join(fixture.root, 'scripts/test-env-up.sh');
-  const down = join(fixture.root, 'scripts/test-env-down.sh');
+  const env = { ...fixtureEnv(fixture.path), TEST_ENV_CACHE_TTL_SECONDS: '600' };
+  const up = shellPath(join(fixture.root, 'scripts/test-env-up.sh'));
+  const down = shellPath(join(fixture.root, 'scripts/test-env-down.sh'));
 
-  const cold = spawnSync('/bin/sh', [up], { cwd: tmpdir(), encoding: 'utf8', env, timeout: 20_000 });
+  const cold = spawnSync(SH, [up], { cwd: tmpdir(), encoding: 'utf8', env, timeout: RUN_MS });
   assert.equal(cold.status, 0, cold.stderr);
   const first = descriptor(fixture.root);
   launchedPids.add(first.app.pid);
@@ -221,7 +269,7 @@ test('reuses an instance whose sources were last touched inside the boot second'
   utimesSync(join(fixture.root, 'package.json'), second + 0.5, second + 0.5);
   utimesSync(descriptorPath, second + 0.9, second + 0.9);
 
-  const warm = spawnSync('/bin/sh', [up], { encoding: 'utf8', env, timeout: 20_000 });
+  const warm = spawnSync(SH, [up], { encoding: 'utf8', env, timeout: RUN_MS });
   assert.equal(warm.status, 0, warm.stderr);
   assert.match(
     warm.stdout,
@@ -230,7 +278,7 @@ test('reuses an instance whose sources were last touched inside the boot second'
   );
   assert.equal(descriptor(fixture.root).app.pid, first.app.pid);
 
-  spawnSync('/bin/sh', [down], { encoding: 'utf8', env, timeout: 20_000 });
+  spawnSync(SH, [down], { encoding: 'utf8', env, timeout: RUN_MS });
   launchedPids.delete(first.app.pid);
 });
 
@@ -244,17 +292,17 @@ test('reuses an instance whose sources were last touched inside the boot second'
  * differs, so an instance booted under the other condition must not be reused. Nothing else in the
  * reuse check notices: `.xezar/` is not a build input and the pins are equal.
  */
-test('never reuses an instance across a change in the repository single-project marker', { timeout: 60_000, skip: NO_SH }, async () => {
+test('never reuses an instance across a change in the repository single-project marker', { timeout: TEST_MS, skip: NO_SH }, async () => {
   const fixture = makeFixture(hasSetsid);
-  const env = { ...process.env, PATH: fixture.path, TEST_ENV_CACHE_TTL_SECONDS: '600' };
-  const up = join(fixture.root, 'scripts/test-env-up.sh');
-  const down = join(fixture.root, 'scripts/test-env-down.sh');
+  const env = { ...fixtureEnv(fixture.path), TEST_ENV_CACHE_TTL_SECONDS: '600' };
+  const up = shellPath(join(fixture.root, 'scripts/test-env-up.sh'));
+  const down = shellPath(join(fixture.root, 'scripts/test-env-down.sh'));
   const descriptorPath = join(fixture.root, '.local/qa/test-env.json');
   const markerOf = (): unknown =>
     (JSON.parse(readFileSync(descriptorPath, 'utf8')) as { environment: { singleProjectRoot?: unknown } })
       .environment.singleProjectRoot;
 
-  const cold = spawnSync('/bin/sh', [up], { cwd: tmpdir(), encoding: 'utf8', env, timeout: 20_000 });
+  const cold = spawnSync(SH, [up], { cwd: tmpdir(), encoding: 'utf8', env, timeout: RUN_MS });
   assert.equal(cold.status, 0, cold.stderr);
   const withoutMarker = descriptor(fixture.root);
   launchedPids.add(withoutMarker.app.pid);
@@ -264,7 +312,7 @@ test('never reuses an instance across a change in the repository single-project 
   // only this dimension can tell the running instance was booted under the other condition.
   mkdirSync(join(fixture.root, '.xezar'), { recursive: true });
   writeFileSync(join(fixture.root, '.xezar/workspace.json'), '{}\n');
-  const withMarkerRun = spawnSync('/bin/sh', [up], { encoding: 'utf8', env, timeout: 20_000 });
+  const withMarkerRun = spawnSync(SH, [up], { encoding: 'utf8', env, timeout: RUN_MS });
   assert.equal(withMarkerRun.status, 0, withMarkerRun.stderr);
   assert.match(
     withMarkerRun.stdout,
@@ -278,14 +326,14 @@ test('never reuses an instance across a change in the repository single-project 
 
   // And back: an instance booted under the marker is never reused once it is gone.
   rmSync(join(fixture.root, '.xezar'), TEST_DIR_RM_OPTIONS);
-  const markerGoneRun = spawnSync('/bin/sh', [up], { encoding: 'utf8', env, timeout: 20_000 });
+  const markerGoneRun = spawnSync(SH, [up], { encoding: 'utf8', env, timeout: RUN_MS });
   assert.equal(markerGoneRun.status, 0, markerGoneRun.stderr);
   assert.match(markerGoneRun.stdout, /TEST_ENV_REUSED=0/);
   const markerGone = descriptor(fixture.root);
   launchedPids.add(markerGone.app.pid);
   assert.equal(markerOf(), false);
 
-  spawnSync('/bin/sh', [down], { encoding: 'utf8', env, timeout: 20_000 });
+  spawnSync(SH, [down], { encoding: 'utf8', env, timeout: RUN_MS });
   launchedPids.delete(markerGone.app.pid);
 });
 
@@ -300,7 +348,7 @@ test('never reuses an instance across a change in the repository single-project 
  * then falls back to the next port the way the real app does and prints the port it holds. The
  * descriptor must name THAT port and it must answer.
  */
-test('reports the port the app really holds when the probed port is taken at bind time', { timeout: 60_000, skip: NO_SH }, async () => {
+test('reports the port the app really holds when the probed port is taken at bind time', { timeout: TEST_MS, skip: NO_SH }, async () => {
   // BREAK-671-ENV-PORT. The app's emitted boot URL is the deterministic signal; neither a
   // released availability probe nor the last unrelated log line containing “cockpit” owns it.
   const fixture = makeFixture(hasSetsid);
@@ -309,16 +357,15 @@ test('reports the port the app really holds when the probed port is taken at bin
   // takes it at bind time, and the app must move to the next port and be reported there.
   const requested = await freePort();
   const env = {
-    ...process.env,
-    PATH: fixture.path,
+    ...fixtureEnv(fixture.path),
     TEST_ENV_CACHE_TTL_SECONDS: '600',
     TEST_ENV_PREFERRED_PORT: String(requested),
     XEZ_TEST_TAKE_PORT_AT_BIND: '1',
   };
-  const up = join(fixture.root, 'scripts/test-env-up.sh');
-  const down = join(fixture.root, 'scripts/test-env-down.sh');
+  const up = shellPath(join(fixture.root, 'scripts/test-env-up.sh'));
+  const down = shellPath(join(fixture.root, 'scripts/test-env-down.sh'));
 
-  const cold = spawnSync('/bin/sh', [up], { cwd: tmpdir(), encoding: 'utf8', env, timeout: 20_000 });
+  const cold = spawnSync(SH, [up], { cwd: tmpdir(), encoding: 'utf8', env, timeout: RUN_MS });
   assert.equal(cold.status, 0, cold.stderr);
   const started = descriptor(fixture.root);
   launchedPids.add(started.app.pid);
@@ -326,7 +373,7 @@ test('reports the port the app really holds when the probed port is taken at bin
   const health = await fetch(`${started.baseUrl}/api/v1/health`);
   assert.equal(health.status, 200, 'the descriptor URL must answer');
 
-  spawnSync('/bin/sh', [down], { encoding: 'utf8', env, timeout: 20_000 });
+  spawnSync(SH, [down], { encoding: 'utf8', env, timeout: RUN_MS });
   launchedPids.delete(started.app.pid);
 });
 
@@ -344,18 +391,18 @@ test('reports the port the app really holds when the probed port is taken at bin
  * untouched (the marker is byte-identical and nothing in the repository root appeared, moved or
  * vanished).
  */
-test('boots the marker-carrying repository in the global layout by asking for it, touching nothing', { timeout: 60_000, skip: NO_SH }, async () => {
+test('boots the marker-carrying repository in the global layout by asking for it, touching nothing', { timeout: TEST_MS, skip: NO_SH }, async () => {
   const fixture = makeFixture(hasSetsid);
-  const env = { ...process.env, PATH: fixture.path, TEST_ENV_CACHE_TTL_SECONDS: '600' };
-  const up = join(fixture.root, 'scripts/test-env-up.sh');
-  const down = join(fixture.root, 'scripts/test-env-down.sh');
+  const env = { ...fixtureEnv(fixture.path), TEST_ENV_CACHE_TTL_SECONDS: '600' };
+  const up = shellPath(join(fixture.root, 'scripts/test-env-up.sh'));
+  const down = shellPath(join(fixture.root, 'scripts/test-env-down.sh'));
   const marker = join(fixture.root, '.xezar/workspace.json');
   const descriptorPath = join(fixture.root, '.local/qa/test-env.json');
   mkdirSync(join(fixture.root, '.xezar'), { recursive: true });
   writeFileSync(marker, '{"schemaVersion":1}\n');
   const before = repoRootEntries(fixture.root);
 
-  const cold = spawnSync('/bin/sh', [up], { cwd: tmpdir(), encoding: 'utf8', env, timeout: 20_000 });
+  const cold = spawnSync(SH, [up], { cwd: tmpdir(), encoding: 'utf8', env, timeout: RUN_MS });
   assert.equal(cold.status, 0, cold.stderr);
   const started = descriptor(fixture.root);
   launchedPids.add(started.app.pid);
@@ -378,14 +425,14 @@ test('boots the marker-carrying repository in the global layout by asking for it
 
   // Nothing was moved, so nothing has to be put back: the same warm run reuses the same instance
   // rather than booting again, with the marker untouched in between.
-  const warm = spawnSync('/bin/sh', [up], { encoding: 'utf8', env, timeout: 20_000 });
+  const warm = spawnSync(SH, [up], { encoding: 'utf8', env, timeout: RUN_MS });
   assert.equal(warm.status, 0, warm.stderr);
   assert.match(warm.stdout, /TEST_ENV_REUSED=1/, `--- warm stderr ---\n${warm.stderr}`);
   assert.equal(descriptor(fixture.root).app.pid, started.app.pid);
   assert.deepEqual(repoRootEntries(fixture.root), before);
   assert.equal(readFileSync(marker, 'utf8'), '{"schemaVersion":1}\n');
 
-  const stopped = spawnSync('/bin/sh', [down], { encoding: 'utf8', env, timeout: 20_000 });
+  const stopped = spawnSync(SH, [down], { encoding: 'utf8', env, timeout: RUN_MS });
   assert.equal(stopped.status, 0, stopped.stderr);
   launchedPids.delete(started.app.pid);
 });
@@ -401,23 +448,22 @@ test('boots the marker-carrying repository in the global layout by asking for it
  * stub app holds its listener back (`XEZ_TEST_BOOT_DELAY_MS`) and names its own pid immediately, so
  * the launcher is still waiting on health, inside its boot, when it dies.
  */
-test('a launcher killed mid-boot leaves the repository untouched', { timeout: 60_000, skip: NO_SH }, async () => {
+test('a launcher killed mid-boot leaves the repository untouched', { timeout: TEST_MS, skip: NO_SH }, async () => {
   const fixture = makeFixture(hasSetsid);
   const env = {
-    ...process.env,
-    PATH: fixture.path,
+    ...fixtureEnv(fixture.path),
     TEST_ENV_CACHE_TTL_SECONDS: '600',
     XEZ_TEST_BOOT_DELAY_MS: '5000',
   };
-  const up = join(fixture.root, 'scripts/test-env-up.sh');
-  const down = join(fixture.root, 'scripts/test-env-down.sh');
+  const up = shellPath(join(fixture.root, 'scripts/test-env-up.sh'));
+  const down = shellPath(join(fixture.root, 'scripts/test-env-down.sh'));
   const marker = join(fixture.root, '.xezar/workspace.json');
   const appPidFile = join(fixture.root, '.local/qa/app.pid');
   mkdirSync(join(fixture.root, '.xezar'), { recursive: true });
   writeFileSync(marker, '{"schemaVersion":1}\n');
   const before = repoRootEntries(fixture.root);
 
-  const launcher = spawn('/bin/sh', [up], { cwd: tmpdir(), env, stdio: 'ignore' });
+  const launcher = spawn(SH, [up], { cwd: tmpdir(), env, stdio: 'ignore' });
   try {
     await waitFor(() => existsSync(appPidFile), 15_000, 'the stub app to name its pid');
     launchedPids.add(Number(readFileSync(appPidFile, 'utf8').trim()));
@@ -431,24 +477,23 @@ test('a launcher killed mid-boot leaves the repository untouched', { timeout: 60
     assert.equal(existsSync(join(fixture.root, '.xezar/workspace.json.e2e-hidden')), false);
   } finally {
     if (launcher.exitCode === null) launcher.kill('SIGKILL');
-    spawnSync('/bin/sh', [down], { encoding: 'utf8', env, timeout: 20_000 });
+    spawnSync(SH, [down], { encoding: 'utf8', env, timeout: RUN_MS });
   }
 });
 
-test('launcher strips inherited task-control variables before starting the shared server', { timeout: 60_000, skip: NO_SH }, async () => {
+test('launcher strips inherited task-control variables before starting the shared server', { timeout: TEST_MS, skip: NO_SH }, async () => {
   const fixture = makeFixture(hasSetsid);
   const env = {
-    ...process.env,
-    PATH: fixture.path,
+    ...fixtureEnv(fixture.path),
     TEST_ENV_CACHE_TTL_SECONDS: '600',
     XEZ_HANDOFF_FILE: '/sentinel/handoff.md',
     XEZ_TODOS_FILE: '/sentinel/todos.json',
     XEZ_TASK_ID: 'sentinel-task',
   };
-  const up = join(fixture.root, 'scripts/test-env-up.sh');
-  const down = join(fixture.root, 'scripts/test-env-down.sh');
+  const up = shellPath(join(fixture.root, 'scripts/test-env-up.sh'));
+  const down = shellPath(join(fixture.root, 'scripts/test-env-down.sh'));
 
-  const cold = spawnSync('/bin/sh', [up], { cwd: tmpdir(), encoding: 'utf8', env, timeout: 20_000 });
+  const cold = spawnSync(SH, [up], { cwd: tmpdir(), encoding: 'utf8', env, timeout: RUN_MS });
   assert.equal(cold.status, 0, cold.stderr);
   const started = descriptor(fixture.root);
   launchedPids.add(started.app.pid);
@@ -456,7 +501,7 @@ test('launcher strips inherited task-control variables before starting the share
   const taskEnv = await fetch(`${started.baseUrl}/api/task-env`).then((response) => response.json());
   assert.deepEqual(taskEnv, { handoff: null, todos: null, taskId: null });
 
-  const stopped = spawnSync('/bin/sh', [down], { encoding: 'utf8', env, timeout: 20_000 });
+  const stopped = spawnSync(SH, [down], { encoding: 'utf8', env, timeout: RUN_MS });
   assert.equal(stopped.status, 0, stopped.stderr);
   launchedPids.delete(started.app.pid);
 });
@@ -467,12 +512,12 @@ for (const withSetsid of [true, false]) {
     { skip: NO_SH || (withSetsid && !hasSetsid ? 'setsid is not available on this platform' : false) },
     async () => {
       const fixture = makeFixture(withSetsid);
-      const env = { ...process.env, PATH: fixture.path, TEST_ENV_CACHE_TTL_SECONDS: '600' };
-      const up = join(fixture.root, 'scripts/test-env-up.sh');
-      const down = join(fixture.root, 'scripts/test-env-down.sh');
-      const callerPidFile = join(fixture.root, 'caller.pid');
+      const env = { ...fixtureEnv(fixture.path), TEST_ENV_CACHE_TTL_SECONDS: '600' };
+      const up = shellPath(join(fixture.root, 'scripts/test-env-up.sh'));
+      const down = shellPath(join(fixture.root, 'scripts/test-env-down.sh'));
+      const callerPidFile = shellPath(join(fixture.root, 'caller.pid'));
 
-      const coldCommand = withSetsid ? commandPath('setsid') : '/bin/sh';
+      const coldCommand = withSetsid ? commandPath('setsid') : SH;
       const coldArgs = withSetsid
         ? ['/bin/sh', '-c', 'echo $$ > "$2"; sh "$1"', 'launcher-parent', up, callerPidFile]
         : ['-c', 'echo $$ > "$2"; sh "$1"', 'launcher-parent', up, callerPidFile];
@@ -480,10 +525,10 @@ for (const withSetsid of [true, false]) {
         cwd: tmpdir(),
         encoding: 'utf8',
         env,
-        timeout: 20_000,
+        timeout: RUN_MS,
       });
       assert.equal(cold.status, 0, cold.stderr);
-      assert.match(cold.stdout, /TEST_ENV_REUSED=0/);
+      assert.match(cold.stdout, /TEST_ENV_REUSED=0/, cold.stderr);
 
       const first = descriptor(fixture.root);
       launchedPids.add(first.app.pid);
@@ -500,7 +545,7 @@ for (const withSetsid of [true, false]) {
       const health = await fetch(`${first.baseUrl}/api/health`).then((response) => response.json());
       assert.deepEqual(health, { ok: true });
 
-      const warm = spawnSync('/bin/sh', [up], { encoding: 'utf8', env, timeout: 20_000 });
+      const warm = spawnSync(SH, [up], { encoding: 'utf8', env, timeout: RUN_MS });
       assert.equal(warm.status, 0, warm.stderr);
       // The script LOGS why it declined to reuse ("descriptor is stale", "source changed since
       // boot", …) and it logs to stderr. Asserting on stdout alone threw that away, which is
@@ -512,7 +557,7 @@ for (const withSetsid of [true, false]) {
       );
       assert.equal(descriptor(fixture.root).app.pid, first.app.pid);
 
-      const stopped = spawnSync('/bin/sh', [down], { encoding: 'utf8', env, timeout: 20_000 });
+      const stopped = spawnSync(SH, [down], { encoding: 'utf8', env, timeout: RUN_MS });
       assert.equal(stopped.status, 0, stopped.stderr);
       assert.match(stopped.stdout, /TEST_ENV_STATUS=stopped/);
       assert.throws(() => process.kill(first.app.pid, 0));

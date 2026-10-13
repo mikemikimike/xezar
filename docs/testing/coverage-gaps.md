@@ -742,7 +742,7 @@ duplicate vitest test to move a percentage.
 | A-14 a lost response replays once, a collision is refused, a SIGKILL between effect and receipt is unverified | node:test | `test/unit/mcp-durability.test.ts:204,246,271,342` | yes |
 | A-16 absent or corrupt MCP state starts fresh, warns once, keeps the bad bytes; no two owners after a restart | node:test | `test/unit/mcp-durability.test.ts:416,466,558` | yes |
 | A-21 reconnect: valid cursor, cursor past retention, duplicates and out-of-order rows | node:test | `test/unit/mcp-durability.test.ts:587-667` | yes |
-| A-02, A-03, A-04, A-12 project isolation, partial success, foreign cursors, connection file kept out of Git | node:test | `test/unit/mcp-isolation.test.ts:73-299` (skipped on Windows) | yes |
+| A-02, A-03, A-04, A-12 project isolation, partial success, foreign cursors, connection file kept out of Git | node:test | `test/unit/mcp-isolation.test.ts:78-304` (two A-03 cases skip on Windows without file-symlink rights, #973) | yes |
 | A-16 an UPGRADED packaged cockpit with MCP state corrupt, deleted, hard-restarted | packaged CLI | `test/e2e/mcp-upgrade.test.ts` (packaged upgrade case) | yes (`npm run test:package`) |
 | `xez mcp` as a real subprocess: handshake, absent bridge, service down, a neighbour on the port, and a directory xezar never served answering `not-registered` (the branch at `mcp/index.ts` (`not-registered`)) | server unit, but the bridge runs in a CHILD process v8 does not follow | `src/mcp/cli.test.ts:120,153,165,199,203` | yes |
 | A-20 the open cockpit follows MCP changes; A-01/A-17/A-23 the MCP connection screen | browser | `packages/web/e2e/mcp-live-sync.e2e.ts:194,232`, `mcp-collaboration.e2e.ts` | yes (`ui-e2e`) |
