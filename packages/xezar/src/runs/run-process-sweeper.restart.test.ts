@@ -91,6 +91,27 @@ describe('a saved ledger survives the engine (#982)', () => {
     });
   }
 
+  it('win32: a slow first table read at start-up still stops the leftovers and reports them', async () => {
+    // Measured on Windows: a fresh engine's first PowerShell read took ~11 s, past SWEEP_CAP_MS.
+    const machine = machineFor('win32');
+    await firstEngineRecords(machine);
+    machine.processes.get(ROOT)!.alive = false;
+    let reads = 0;
+    const reports: string[] = [];
+    const sweeper = new RunProcessSweeper(
+      { report: (_runId, text) => reports.push(text), ledgerDir: dir },
+      machine.deps({ readTable: async () => {
+        reads += 1;
+        if (reads === 1) await new Promise((resolve) => setTimeout(resolve, 11_000));
+        return machine.table();
+      } }),
+    );
+    await settle(sweeper, sweeper.recover(RUN));
+
+    expect(machine.isAlive(CHILD)).toBe(false);
+    expect(reports).toEqual([`Stopped 1 program this task started: ${CHILD} node dev-server.js.`]);
+  });
+
   it('a pid now held by a later process counts for nothing', async () => {
     const machine = machineFor('win32');
     await firstEngineRecords(machine);

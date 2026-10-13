@@ -71,6 +71,13 @@ const LEDGER_FILE_SUFFIX = '.processes.json';
 const LEDGER_SAVE_INTERVAL_MS = 10_000;
 
 export const SWEEP_CAP_MS = 10_000;
+/**
+ * #982: the sweep at start-up, before a run that was running resumes. Only that resumed turn
+ * waits for it, and it should; a freshly started Windows engine's first PowerShell reads are slow
+ * (measured: the stop landed at 11 s, past the 10 s cap, so the note was lost and the resumed turn
+ * started beside the old one).
+ */
+export const RESTART_SWEEP_CAP_MS = 30_000;
 const MAX_PASSES = 3;
 const TERM_GRACE_MS = 2_000;
 const POLL_MS = 100;
@@ -359,7 +366,8 @@ export class RunProcessSweeper {
       this.removeSaved(runId);
     }
     const previous = this.sweeps.get(runId) ?? Promise.resolve();
-    const sweep = previous.then(() => this.sweep(runId, ledger)).catch(() => undefined);
+    const capMs = this.deps.capMs ?? (reason === 'restart' ? RESTART_SWEEP_CAP_MS : SWEEP_CAP_MS);
+    const sweep = previous.then(() => this.sweep(runId, ledger, capMs)).catch(() => undefined);
     this.sweeps.set(runId, sweep);
     void sweep.finally(() => {
       if (this.sweeps.get(runId) === sweep) this.sweeps.delete(runId);
@@ -368,14 +376,14 @@ export class RunProcessSweeper {
     return sweep;
   }
 
-  private async sweep(runId: string, ledger: RunProcessLedger | undefined): Promise<void> {
+  private async sweep(runId: string, ledger: RunProcessLedger | undefined, capMs: number): Promise<void> {
     const record = new SweepRecord();
     let cap: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
-        this.passes(runId, ledger, record).catch(() => undefined),
+        this.passes(runId, ledger, record, capMs).catch(() => undefined),
         new Promise<void>((resolve) => {
-          cap = setTimeout(resolve, this.deps.capMs ?? SWEEP_CAP_MS);
+          cap = setTimeout(resolve, capMs);
         }),
       ]);
     } finally {
@@ -388,10 +396,10 @@ export class RunProcessSweeper {
   }
 
   /** Scan, stop, and scan again – a supervisor may have restarted what was stopped. */
-  private async passes(runId: string, ledger: RunProcessLedger | undefined, record: SweepRecord): Promise<void> {
+  private async passes(runId: string, ledger: RunProcessLedger | undefined, record: SweepRecord, capMs: number): Promise<void> {
     // Windows and macOS prove nothing without a recorded ledger: skip the table read (PowerShell).
     if (this.usesLedger() && (ledger === undefined || ledger.isEmpty)) return;
-    const deadline = Date.now() + (this.deps.capMs ?? SWEEP_CAP_MS);
+    const deadline = Date.now() + capMs;
     for (let pass = 0; pass < MAX_PASSES && !record.closed && Date.now() < deadline; pass += 1) {
       const readTable = this.deps.readTable ?? readProcessTable;
       const read = await readTable({ timeoutMs: Math.max(1, Math.min(TABLE_TIMEOUT_MS, deadline - Date.now())) });
