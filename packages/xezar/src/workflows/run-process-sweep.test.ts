@@ -261,4 +261,30 @@ describe('RunManager and the run-process sweep (#943)', () => {
     expect(reportNotes(run.id)).toEqual([]);
     build();
   }, 60_000);
+
+  it('after a crash, start-up sweeps what the interrupted turn left before the run resumes (#982)', async () => {
+    // A finished first turn gives the run a session to resume; then the engine "dies" mid-turn:
+    // the record still says running, and a server that turn started is still alive.
+    const run = manager.startRun(ONE_STEP, { task: 'mock:done', worktree: false });
+    await waitFor(() => !manager.isActive(run.id), 'the first turn to end');
+    await manager.quiesce();
+    store.updateStep(run.id, 'task', { status: 'running' });
+    store.updateRun(run.id, { status: 'running', currentStepId: 'task', finishedAt: undefined });
+    leaveBackgroundServer(run.id);
+    const spawnsBefore = spawns();
+
+    tableGate = new Gate();
+    build();
+    await manager.recover();
+    await waitFor(() => tableGate!.entered, 'the restart sweep to start');
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(spawns()).toBe(spawnsBefore); // the resumed turn waits for the sweep
+
+    tableGate.release();
+    await waitFor(() => reportNotes(run.id).length === 1, 'the report note');
+    await waitFor(() => spawns() === spawnsBefore + 1, 'the resumed turn to start');
+    expect(machine.isAlive(SERVER_PID)).toBe(false);
+    expect(machine.isAlive(OTHER_RUN_PID)).toBe(true);
+    expect(reportNotes(run.id)[0]!.message).toBe(`Stopped 1 program this task started: ${SERVER_PID} node server.js --port 3000.`);
+  }, 60_000);
 });

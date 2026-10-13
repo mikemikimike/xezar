@@ -47,20 +47,28 @@ import {
   type ReadTableOptions,
   type SignalOutcome,
 } from '../platform/process-table.ts';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { writeFileAtomic } from '../platform/atomic-write.ts';
 import { gitRoot } from '../platform/git-bash.ts';
 import { readMsysTable, type MsysRow } from '../platform/msys-process-tree.ts';
 import { RunProcessLedger } from './run-process-ledger.ts';
 import { SweepRecord } from './run-process-sweep-record.ts';
 import { buildSweepReport, rootNotConfirmedNote } from './run-process-report.ts';
 
-/** Why xezar stopped the run. A `timeout` keeps the ledger (the run goes on); the others end
- *  the run's current life, so its ledger is handed to the sweep and a Continue starts afresh. */
 /** The environment entry every agent of a run carries; it lives with the rest of the proof. */
 export { RUN_MARKER_ENV };
 
-export type SweepReason = 'memory-limit' | 'cancel' | 'timeout';
+/** Why xezar stopped the run. A `timeout` keeps the ledger (the run goes on); the others end
+ *  the run's current life, so its ledger is handed to the sweep and a Continue starts afresh.
+ *  `restart` (#982): xezar exited while the run was running, and the restarted engine sweeps what
+ *  that turn left before it resumes the run. */
+export type SweepReason = 'memory-limit' | 'cancel' | 'timeout' | 'restart';
+
+/** A run's saved ledger, next to its other files: `<ledgerDir>/<runId>.processes.json` (#982). */
+const LEDGER_FILE_SUFFIX = '.processes.json';
+/** How often an unchanged ledger is saved again, only so its `lastSeenAt` stays current. */
+const LEDGER_SAVE_INTERVAL_MS = 10_000;
 
 export const SWEEP_CAP_MS = 10_000;
 const MAX_PASSES = 3;
@@ -84,6 +92,12 @@ export interface RunProcessSweeperOptions {
   report: (runId: string, text: string) => void;
   /** Enrol each sweep so teardown can wait for it (`RunManager.trackRun`). */
   track?: (sweep: Promise<void>) => void;
+  /**
+   * Windows and macOS (#982): where each run's ledger is saved while it holds something, so an
+   * engine started after a crash can still prove which processes the interrupted turn left.
+   * Absent: ledgers live in memory only, as before.
+   */
+  ledgerDir?: string;
 }
 
 /** Test seams. Production passes none. */
@@ -125,6 +139,10 @@ export class RunProcessSweeper {
   /** Git's `ps.exe`, once looked up: null when there is none. */
   private gitPs: string | null | undefined;
   private msysReading = false;
+  /** #982: what each run's saved file last held, so an unchanged ledger is not rewritten every read. */
+  private readonly saved = new Map<string, { entries: number; groups: number; at: number }>();
+  /** #982: one file operation per run at a time, so a late save never recreates a removed file. */
+  private readonly fileOps = new Map<string, Promise<void>>();
 
   constructor(
     private readonly options: RunProcessSweeperOptions,
@@ -145,6 +163,11 @@ export class RunProcessSweeper {
       this.ledgers.set(runId, ledger);
     }
     ledger.pin(pid, spawnedAt);
+  }
+
+  /** Test seam (#982): every save and removal queued so far has finished. */
+  async filesSettled(): Promise<void> {
+    while (this.fileOps.size > 0) await Promise.all([...this.fileOps.values()]);
   }
 
   /** Test seam: has the run's ledger recorded this pid? Always false on Linux. */
@@ -170,6 +193,45 @@ export class RunProcessSweeper {
   /** Forget the run's ledger (it ended without a stop). A pending sweep carries on. */
   drop(runId: string): void {
     this.ledgers.delete(runId);
+    this.removeSaved(runId);
+  }
+
+  /**
+   * #982: the engine started after a crash, and the run was `running`. Sweep what the interrupted
+   * turn left before the run resumes – a Continue waits for `pending()`. Linux proves it by the
+   * marker, as always; Windows and macOS by the ledger the earlier engine saved, under the same
+   * identity rules, so a pid now held by a later process counts for nothing. No saved ledger, or
+   * an unreadable one: nothing to sweep.
+   */
+  recover(runId: string): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    if (this.usesLedger()) {
+      const ledger = this.readSaved(runId);
+      if (ledger === null || ledger.isEmpty) {
+        this.removeSaved(runId);
+        return Promise.resolve();
+      }
+      this.ledgers.set(runId, ledger);
+    }
+    return this.schedule(runId, 'restart');
+  }
+
+  /** #982, at start-up: remove the saved ledgers of every run not in `keep` (they can no longer resume). */
+  forgetSavedExcept(keep: Iterable<string>): void {
+    const dir = this.options.ledgerDir;
+    if (dir === undefined || !this.usesLedger()) return;
+    const live = new Set(keep);
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (!name.endsWith(LEDGER_FILE_SUFFIX)) continue;
+      const runId = name.slice(0, -LEDGER_FILE_SUFFIX.length);
+      if (!live.has(runId)) this.removeSaved(runId);
+    }
   }
 
   /** Stop recording and reporting. A pending sweep still stops its targets but appends nothing. */
@@ -190,8 +252,54 @@ export class RunProcessSweeper {
       const rejected = ledger.record(table);
       if (rejected !== undefined && !this.disposed) this.options.report(runId, rootNotConfirmedNote(rejected));
       recorded ||= !ledger.isEmpty;
+      this.save(runId, ledger, table.queriedAt);
     }
     if (recorded && this.platform === 'win32' && !this.msysReading) void this.recordMsys(table);
+  }
+
+  private savedPath(runId: string): string | undefined {
+    const dir = this.options.ledgerDir;
+    return dir === undefined ? undefined : join(dir, `${runId}${LEDGER_FILE_SUFFIX}`);
+  }
+
+  /** #982: save the ledger when it gained something, or every `LEDGER_SAVE_INTERVAL_MS` while it holds something. */
+  private save(runId: string, ledger: RunProcessLedger, at: number): void {
+    const path = this.savedPath(runId);
+    if (path === undefined || this.disposed || ledger.isEmpty) return;
+    const snapshot = ledger.snapshot();
+    const last = this.saved.get(runId);
+    const grew = last === undefined || snapshot.seen.length !== last.entries || snapshot.groups.length !== last.groups;
+    if (!grew && at - last.at < LEDGER_SAVE_INTERVAL_MS) return;
+    this.saved.set(runId, { entries: snapshot.seen.length, groups: snapshot.groups.length, at });
+    const text = JSON.stringify(snapshot);
+    this.fileOp(runId, () => writeFileAtomic(path, text, { mode: 0o600 }));
+  }
+
+  /** #982: forget the saved ledger. Queued behind a save in flight, so that save cannot bring it back. */
+  private removeSaved(runId: string): void {
+    const path = this.savedPath(runId);
+    if (path === undefined) return;
+    this.saved.delete(runId);
+    this.fileOp(runId, async () => rmSync(path, { force: true }));
+  }
+
+  private readSaved(runId: string): RunProcessLedger | null {
+    const path = this.savedPath(runId);
+    if (path === undefined) return null;
+    try {
+      return RunProcessLedger.restore(JSON.parse(readFileSync(path, 'utf8')));
+    } catch {
+      return null;
+    }
+  }
+
+  /** Best effort: a failed save or removal is not the run's failure, and never surfaces. */
+  private fileOp(runId: string, op: () => Promise<void>): void {
+    const next = (this.fileOps.get(runId) ?? Promise.resolve()).then(op).catch(() => undefined);
+    this.fileOps.set(runId, next);
+    void next.finally(() => {
+      if (this.fileOps.get(runId) === next) this.fileOps.delete(runId);
+    });
   }
 
   /**
@@ -221,7 +329,11 @@ export class RunProcessSweeper {
 
   private schedule(runId: string, reason: SweepReason): Promise<void> {
     const ledger = this.ledgers.get(runId);
-    if (reason !== 'timeout') this.ledgers.delete(runId);
+    if (reason !== 'timeout') {
+      this.ledgers.delete(runId);
+      // The sweep holds this ledger now; the run's next life starts a new one, and its own saves.
+      this.removeSaved(runId);
+    }
     const previous = this.sweeps.get(runId) ?? Promise.resolve();
     const sweep = previous.then(() => this.sweep(runId, ledger)).catch(() => undefined);
     this.sweeps.set(runId, sweep);
