@@ -142,6 +142,32 @@ export async function createWorktree(
   repoRoot: string,
   runId: string,
   baseBranch: string,
+  deps: { beforeRetry?: () => Promise<void> } = {},
+): Promise<WorktreeInfo> {
+  try {
+    return await createWorktreeOnce(repoRoot, runId, baseBranch);
+  } catch (error) {
+    // Two tasks starting together: Git read the other task's worktree entry while that
+    // `worktree add` was still writing it. The failed add leaves nothing behind, and the
+    // steps above are idempotent, so one more attempt a moment later is safe (#963).
+    if (!isConcurrentWorktreeAddRace(error)) throw error;
+    await (deps.beforeRetry ?? (() => new Promise<void>((done) => setTimeout(done, WORKTREE_RACE_RETRY_MS))))();
+    return await createWorktreeOnce(repoRoot, runId, baseBranch);
+  }
+}
+
+/** Pause before the one retry of a `worktree add` that met another add mid-write. */
+const WORKTREE_RACE_RETRY_MS = 250;
+
+/** Git's "failed to read .git/worktrees/<name>/commondir" (or `gitdir`): another add mid-write. */
+export function isConcurrentWorktreeAddRace(error: unknown): boolean {
+  return error instanceof Error && /failed to read \S*worktrees[\\/][^\\/\s]+[\\/](?:commondir|gitdir)\b/.test(error.message);
+}
+
+async function createWorktreeOnce(
+  repoRoot: string,
+  runId: string,
+  baseBranch: string,
 ): Promise<WorktreeInfo> {
   let base = baseBranch;
   if (!base || base === 'HEAD') {

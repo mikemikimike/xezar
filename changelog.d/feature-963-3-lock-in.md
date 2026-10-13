@@ -26,3 +26,6 @@
   keeps ranges of ports for itself (Hyper-V, WSL, Docker), and they move on every restart. A port
   inside such a range used to stop the start with "permission denied"; xezar now tries the next
   port, as it does for a port in use. Linux and macOS are unchanged. (#963)
+- 🐛 **Two tasks that start at the same moment no longer fail with "failed to read …/commondir".**
+  Git could read the other task's working copy (Git worktree) while it was still being made. xezar
+  now tries once more a moment later. (#963)

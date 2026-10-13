@@ -192,6 +192,44 @@ describe('createWorktree recovery (real git)', () => {
     expect(listed.stdout.match(new RegExp(`branch refs/heads/${branchFor(runId)}`, 'g'))).toHaveLength(1);
   });
 
+  // #963: two tasks starting together – Git reads the other add's half-written entry and fails.
+  // An empty `commondir` is exactly what that reader sees.
+  it('retries once when another worktree add is still writing its entry', async () => {
+    const repo = await fixtureRepo('xez-worktree-race-');
+    const runId = '55555555-5555-4555-8555-555555555555';
+    const other = mkdtempSync(join(tmpdir(), 'xez-worktree-race-other-'));
+    worktreeRoots.push(other);
+    const entry = join(repo, '.git', 'worktrees', 'busy');
+    mkdirSync(entry, { recursive: true });
+    writeFileSync(join(other, '.git'), `gitdir: ${entry}\n`);
+    writeFileSync(join(entry, 'gitdir'), `${join(other, '.git')}\n`);
+    writeFileSync(join(entry, 'commondir'), '');
+    let retries = 0;
+
+    const made = await createWorktree(repo, runId, 'main', {
+      beforeRetry: async () => {
+        retries += 1;
+        writeFileSync(join(entry, 'commondir'), '../..\n');
+      },
+    });
+
+    expect(retries).toBe(1);
+    expect(made.branch).toBe(branchFor(runId));
+  });
+
+  it('does not retry any other worktree failure', async () => {
+    const repo = await fixtureRepo('xez-worktree-norace-');
+    let retries = 0;
+    await expect(
+      createWorktree(repo, '66666666-6666-4666-8666-666666666666', 'no-such-base', {
+        beforeRetry: async () => {
+          retries += 1;
+        },
+      }),
+    ).rejects.toThrow();
+    expect(retries).toBe(0);
+  });
+
   it('preserves an unregistered non-empty managed path instead of deleting it', async () => {
     const repo = await fixtureRepo('xez-worktree-preserve-');
     const runId = '33333333-3333-4333-8333-333333333333';

@@ -256,9 +256,10 @@ afterEach(() => {
     else process.env[key] = savedEnv[key];
   }
   for (const store of stores.splice(0)) store.close();
-  // A home's background team-skills clone may still be writing into it: retry on every OS. Windows
-  // can hold a project folder for longer on a loaded runner, so it waits up to about 25 s (#963).
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { ...TEST_DIR_RM_OPTIONS, maxRetries: onWindows ? 22 : 10, retryDelay: 100 });
+  // A home's background team-skills clone may still be writing into it, and a loaded runner can
+  // hold a folder for longer: retry for about 9 s, or about 25 s on Windows – each inside its
+  // hook limit (#963).
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { ...TEST_DIR_RM_OPTIONS, maxRetries: onWindows ? 22 : 13, retryDelay: 100 });
 });
 
 /** The cockpit's own request: same-origin, from the loopback deployment a browser talks to. */
