@@ -470,12 +470,25 @@ const PI_EXTENSION_FIX =
  * the journal either way, and the leader reads them with `leader_events`.
  */
 export function piReactionTarget(
-  opts: Omit<PiReactionAdapterOptions, 'link'> & { link?: PiRpcLink; unreachable?: string },
+  opts: Omit<PiReactionAdapterOptions, 'link'> & { link?: PiRpcLink; unreachable?: string; unsupported?: true },
 ): PiReactionTarget {
   if (opts.link !== undefined && !opts.link.closed) {
     return { kind: 'rpc', adapter: new PiReactionAdapter({ ...opts, link: opts.link }) };
   }
   const because = opts.unreachable === undefined ? '' : ` (${opts.unreachable})`;
+  // No pi leader can attach on this system yet (#963): the extension cannot help, so do not send
+  // the person to start it and attach again – reading events is the whole remedy.
+  if (opts.unsupported) {
+    return {
+      kind: 'blocked',
+      blocker: {
+        code: 'pi-not-addressable',
+        recoverable: true,
+        message: `xezar has no live link to a pi leader for this project${because}. Events stay in the project journal and nothing is lost.`,
+        fix: BLOCKER_FIX,
+      },
+    };
+  }
   return {
     kind: 'blocked',
     blocker: {

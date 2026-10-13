@@ -82,9 +82,10 @@ export function piLeaderPath(dataDir: string): string {
 export function readPiLeaderDescriptor(
   dataDir: string,
   platform: NodeJS.Platform = process.platform,
-): { ok: true; descriptor: PiLeaderDescriptor } | { ok: false; reason: string } {
+): { ok: true; descriptor: PiLeaderDescriptor } | { ok: false; reason: string; unsupported?: true } {
   // #963: the pi extension listens on a Unix socket; a pi leader over Windows pipes is a follow-up.
-  if (platform === 'win32') return { ok: false, reason: 'attaching a pi leader is not available on this system yet' };
+  // `unsupported` keeps the blocker from advising the extension, which cannot help here.
+  if (platform === 'win32') return { ok: false, reason: 'attaching a pi leader is not available on this system yet', unsupported: true };
   let raw: string;
   try {
     raw = readFileSync(piLeaderPath(dataDir), 'utf8');
