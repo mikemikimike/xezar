@@ -224,7 +224,7 @@ export async function createWorktree(
 /**
  * Best-effort on-disk size of a worktree directory in bytes, via POSIX
  * `du -sk` (kibibytes → bytes). When `du` cannot run – Windows without Git's
- * `usrin` on PATH – the size is summed in Node instead (apparent file sizes,
+ * `usr\bin` on PATH – the size is summed in Node instead (apparent file sizes,
  * symlinks and junctions not followed, at most {@link SIZE_WALK_BUDGET_MS}).
  * Returns `null` for a missing path, a walk over budget, or any other error.
  * Never throws: worktree retention is count-based, so a null size only blanks
@@ -241,7 +241,7 @@ export function worktreeSizeBytes(
         resolve(sumTreeBytes(path, deps.budgetMs ?? SIZE_WALK_BUDGET_MS));
         return;
       }
-      const kib = Number.parseInt(stdout.trim().split(/s+/)[0] ?? '', 10);
+      const kib = Number.parseInt(stdout.trim().split(/\s+/)[0] ?? '', 10);
       resolve(Number.isFinite(kib) ? kib * 1024 : null);
     });
   });
