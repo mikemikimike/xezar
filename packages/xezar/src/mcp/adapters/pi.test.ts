@@ -798,6 +798,16 @@ describe('piReactionTarget — where a project\'s pi events go', () => {
     expect(target.blocker.fix).toMatch(/leader_events/);
   });
 
+  it('where no pi leader can attach yet (#963): no advice to start the extension and attach again', () => {
+    const target = piReactionTarget({ projectId: 'xez330', roleInstruction: ROLE, unreachable: 'attaching a pi leader is not available on this system yet', unsupported: true });
+    expect(target).toMatchObject({ kind: 'blocked', blocker: { code: 'pi-not-addressable', recoverable: true } });
+    if (target.kind !== 'blocked') throw new Error('unreachable');
+    expect(target.blocker.message).toContain('(attaching a pi leader is not available on this system yet)');
+    expect(target.blocker.message).not.toMatch(/extension/);
+    expect(target.blocker.fix).not.toMatch(/extension|attach again/);
+    expect(target.blocker.fix).toMatch(/leader_events/);
+  });
+
   /**
    * The blocker's `fix` is the ONE instruction a person gets when a pi leader cannot be reached, and
    * it names a file. For one round of review it named `pi-leader-extension.mjs`, which is not built,

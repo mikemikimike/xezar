@@ -1043,7 +1043,7 @@ export class LeaderDelivery implements ReactionAdapter, ProjectLeaderPort {
     const dataDir = this.#opts.dataDir ?? projectDataDir(this.#opts.projectRoot);
     const read = this.#opts.piLeader?.read ?? readPiLeaderDescriptor;
     const found = read(dataDir);
-    if (!found.ok) return { target: piReactionTarget({ ...base, unreachable: found.reason }) };
+    if (!found.ok) return { target: piReactionTarget({ ...base, unreachable: found.reason, ...(found.unsupported ? { unsupported: true } : {}) }) };
     const connect = this.#opts.piLeader?.connect ?? connectPiLeaderLink;
     let link: PiLeaderLink;
     try {
