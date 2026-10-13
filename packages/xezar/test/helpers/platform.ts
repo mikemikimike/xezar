@@ -23,6 +23,18 @@ export const TEST_DIR_RM_OPTIONS: Readonly<RmOptions> = onWindows
   ? { recursive: true, force: true, maxRetries: RM_MAX_RETRIES, retryDelay: RM_RETRY_DELAY_MS }
   : { recursive: true, force: true };
 
+/** `rmSync` options for a scratch HOME that xezar's own background work may still be writing into
+ *  when the file ends (#985): the team-skills catalog clones its bare repo into
+ *  `<home>/.cache/xez/skills/…`, unref'd, and the removal can list the folder just before git adds
+ *  a file to it – `ENOTEMPTY` on every OS. Node's retry, on every OS, lets the removal finish once
+ *  the clone gives up on its deleted target (the same retry `TEST_DIR_RM_OPTIONS` uses on Windows). */
+export const BACKGROUND_WRITER_RM_OPTIONS: Readonly<RmOptions> = {
+  recursive: true,
+  force: true,
+  maxRetries: RM_MAX_RETRIES,
+  retryDelay: RM_RETRY_DELAY_MS,
+};
+
 /** Home for a local socket. POSIX keeps literal `/tmp`: a Unix socket path is capped near 104 bytes
  *  and the per-run TMPDIR can be deeper. Windows serves MCP on a named pipe, with no path limit: tmpdir(). */
 /**
