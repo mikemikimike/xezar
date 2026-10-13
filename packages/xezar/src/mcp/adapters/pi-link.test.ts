@@ -113,10 +113,10 @@ const DESCRIPTOR_RULES: NodeJS.Platform = onWindows ? 'linux' : process.platform
 describe('reading the descriptor the pi leader extension writes', () => {
   it('on Windows answers that attaching a pi leader is not available yet, whatever the folder holds (#963)', () => {
     const empty = tmp();
-    expect(readPiLeaderDescriptor(empty, 'win32')).toEqual({ ok: false, reason: 'attaching a pi leader is not available on this system yet' });
+    expect(readPiLeaderDescriptor(empty, 'win32')).toEqual({ ok: false, reason: 'attaching a pi leader is not available on this system yet', unsupported: true });
     const announced = tmp();
     writeFileSync(piLeaderPath(announced), JSON.stringify(descriptorFor(join(announced, 'leader.sock'))));
-    expect(readPiLeaderDescriptor(announced, 'win32')).toEqual({ ok: false, reason: 'attaching a pi leader is not available on this system yet' });
+    expect(readPiLeaderDescriptor(announced, 'win32')).toEqual({ ok: false, reason: 'attaching a pi leader is not available on this system yet', unsupported: true });
   });
 
   it('says there is no leader when nothing has announced one — the ordinary case, not an error', () => {

@@ -122,6 +122,10 @@ const until = async (what: string, probe: () => boolean, ms = 5_000): Promise<vo
 const PI_NO_LEADER_REASON = onWindows
   ? 'attaching a pi leader is not available on this system yet'
   : 'no pi leader has announced itself to this project';
+/** The attach refusal: on Windows it leaves out the leader-extension advice, which cannot help there. */
+const PI_NO_LEADER_ERROR = onWindows
+  ? `xezar has no live link to a pi leader for this project (${PI_NO_LEADER_REASON}). Events stay in the project journal and nothing is lost.`
+  : `xezar has no live link to a pi leader for this project (${PI_NO_LEADER_REASON}). pi speaks RPC over its own stdin and stdout only — it has no port, socket or attach mode — so a pi you run yourself can be reached only from inside it, by the xezar leader extension. Events stay in the project journal and nothing is lost.`;
 
 describe('a session that does not own the project', () => {
   it('gets no dispatcher, says why once in the log, and reports no delivery', () => {
@@ -1739,7 +1743,7 @@ describe('the MCP leader door (#450)', () => {
     plain.sessionOpened('s3');
     expect(await plain.act({ action: 'attach', client: 'pi' })).toEqual({
       ok: false,
-      error: `xezar has no live link to a pi leader for this project (${PI_NO_LEADER_REASON}). pi speaks RPC over its own stdin and stdout only — it has no port, socket or attach mode — so a pi you run yourself can be reached only from inside it, by the xezar leader extension. Events stay in the project journal and nothing is lost.`,
+      error: PI_NO_LEADER_ERROR,
     });
     expect(await plain.act({ action: 'attach', client: 'codex' })).toEqual({
       ok: false,
