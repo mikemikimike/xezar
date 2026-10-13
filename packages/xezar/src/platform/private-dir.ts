@@ -199,12 +199,16 @@ async function windowsCheck(paths: readonly string[], ensure: boolean, deps: Pri
   const powershell = powershellPath(deps.env ?? process.env);
   if (powershell === null) return refuse('not-private', folder);
   const env = { ...(deps.env ?? process.env), [ACL_INPUT_ENV]: aclInput(paths, ensure, options.startTimeOf) };
-  const text = await (deps.run ?? defaultTableRunner)(powershell, powershellArgs(ACL_SCRIPT), {
-    maxBuffer: ACL_MAX_BUFFER,
-    timeoutMs: ACL_TIMEOUT_MS,
-    hide: true,
-    env,
-  }).catch(() => null);
+  const readAcl = (): Promise<string | null> =>
+    (deps.run ?? defaultTableRunner)(powershell, powershellArgs(ACL_SCRIPT), {
+      maxBuffer: ACL_MAX_BUFFER,
+      timeoutMs: ACL_TIMEOUT_MS,
+      hide: true,
+      env,
+    }).catch(() => null);
+  let text = await readAcl();
+  // A fully loaded CI runner can keep PowerShell past the limit: tests read once more (#963).
+  if (text === null && deps.run === undefined && elevatedCountsAsStandard()) text = await readAcl();
   if (text === null) return refuse('not-private', folder);
   const report = parseAclReport(text);
   if (deps.run === undefined && report.elevated === true && report.sid !== undefined && elevatedCountsAsStandard()) {
