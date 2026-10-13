@@ -100,7 +100,7 @@ describe('worktreeSizeBytes (#483)', () => {
     expect(await worktreeSizeBytes(join(tmpdir(), 'xez-du-nope-does-not-exist-12345'))).toBeNull();
   });
 
-  describe('when du cannot run (Windows without Git usr\bin on PATH, #963)', () => {
+  describe('when du cannot run (Windows without Git usr\\bin on PATH, #963)', () => {
     const noDu = ((_file: string, _args: readonly string[], _options: unknown, callback: (err: Error | null, stdout: string) => void) => {
       callback(Object.assign(new Error('spawn du ENOENT'), { code: 'ENOENT' }), '');
     }) as unknown as NonNullable<Parameters<typeof worktreeSizeBytes>[1]>['launchFile'];
