@@ -77,6 +77,8 @@ const POLL_MS = 100;
 const KILL_SETTLE_MS = 500;
 const WINDOWS_VERIFY_MS = 1_000;
 const TABLE_TIMEOUT_MS = 5_000;
+/** macOS: the longest a stop waits for its fresh table read (`beforeStop`). */
+const BEFORE_STOP_READ_MS = 2_000;
 /** `/proc` reads in flight at once while looking for the marker. */
 const ENV_READ_BATCH = 32;
 
@@ -173,6 +175,28 @@ export class RunProcessSweeper {
   /** Test seam: has the run's ledger recorded this pid? Always false on Linux. */
   ledgerHas(runId: string, pid: number): boolean {
     return this.ledgers.get(runId)?.has(pid) ?? false;
+  }
+
+  /**
+   * macOS (#963): read the process table once into the run's ledger before xezar stops the run,
+   * and answer when that read is done; undefined when there is nothing to do (Linux, Windows, no
+   * ledger), so the caller stops at once, exactly as before. The sampler reads every ~2 s, and a
+   * program the agent started after the last read is tied to the run only through its parent –
+   * which the stop is about to end, leaving it orphaned and unprovable. Windows needs no read:
+   * its stop reads the tree before it kills. Bounded; a failed read changes nothing.
+   */
+  beforeStop(runId: string): Promise<void> | undefined {
+    if (this.platform !== 'darwin' || this.disposed) return undefined;
+    const ledger = this.ledgers.get(runId);
+    if (ledger === undefined) return undefined;
+    const readTable = this.deps.readTable ?? readProcessTable;
+    return readTable({ timeoutMs: BEFORE_STOP_READ_MS })
+      .then((table) => {
+        if (table === null || this.disposed) return;
+        const rejected = ledger.record(table);
+        if (rejected !== undefined) this.options.report(runId, rootNotConfirmedNote(rejected));
+      })
+      .catch(() => undefined);
   }
 
   /** Sweep in the background (the run left the active set); enrolled through `track`. */
