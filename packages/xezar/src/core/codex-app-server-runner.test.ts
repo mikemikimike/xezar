@@ -20,7 +20,7 @@ import { FILE_SYMLINKS, linkDir, onWindows, withPlatform, TEST_DIR_RM_OPTIONS } 
 import { projectStateLayout, setActiveStateLayout } from '../state-layout.ts';
 import type { AgentEvent } from './agent-runner.js';
 import { KILL_GRACE_MS } from './claude-cli-runner.js';
-import { CodexAppServerRunner, codexPermissions, codexReadOnlyHook } from './codex-app-server-runner.js';
+import { CodexAppServerRunner, codexPermissions, codexReadOnlyHook, codexWindowsSandboxConfig } from './codex-app-server-runner.js';
 
 const hostCodexHome = process.env.CODEX_HOME;
 beforeEach(() => {
@@ -599,6 +599,8 @@ describe('a read-only step runs Codex confined to its worktree and its own roots
   const confined = {
     ...noServers,
     sandbox_workspace_write: { network_access: true, writable_roots: ROOTS },
+    // #1009: on a Windows host the thread also chooses the Windows sandbox, or Codex runs read-only.
+    ...codexWindowsSandboxConfig('workspace-write'),
   };
   let cacheProject: string;
 
@@ -1102,5 +1104,15 @@ describe('a read-only step runs Codex confined to its worktree and its own roots
     expect(codexPermissions(DEFAULT, roots, { XEZ_CODEX_NETWORK: '0' })).toEqual({ sandbox: 'workspace-write' });
     expect(codexPermissions(undefined, roots, {})).toEqual({ sandbox: 'danger-full-access' });
     expect(codexPermissions(['Read', 'Edit'], roots, {})).toEqual({ sandbox: 'danger-full-access' });
+  });
+
+
+  // #1009: Codex 0.157.1 on Windows downgrades workspace-write to read-only unless windows.sandbox
+  // is set, and read-only under approvalPolicy never refuses every command.
+  it('chooses the unelevated Windows sandbox for a workspace-write thread on win32 only', () => {
+    expect(codexWindowsSandboxConfig('workspace-write', 'win32')).toEqual({ windows: { sandbox: 'unelevated' } });
+    expect(codexWindowsSandboxConfig('danger-full-access', 'win32')).toEqual({});
+    expect(codexWindowsSandboxConfig('workspace-write', 'linux')).toEqual({});
+    expect(codexWindowsSandboxConfig('workspace-write', 'darwin')).toEqual({});
   });
 });
