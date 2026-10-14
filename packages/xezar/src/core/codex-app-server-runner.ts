@@ -641,7 +641,7 @@ class CodexSession implements AgentSession {
    */
   private async readIsolation(): Promise<CodexRunIsolation> {
     try {
-      return codexRunIsolation(await this.rpc.request('config/read', { cwd: this.spec.cwd, includeLayers: false }));
+      return codexRunIsolation(await this.rpc.request('config/read', { cwd: this.spec.cwd, includeLayers: true }));
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       throw new Error(

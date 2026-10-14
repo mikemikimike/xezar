@@ -16,19 +16,13 @@ absolute sense.
 
 ---
 
-## 1. Executive summary – the three biggest regression risks
+## 1. Lessons from the closed risks
 
-### Risk 1 – ~~the cockpit has 35 browser tests and CI runs none of them~~ — **CLOSED (#60)**
+The three risks this audit opened with are closed (#60/#128, #120, #43/#62). Their lessons stay:
 
-Closed by #128: a separate `ui-e2e` CI job gated on the literal `TEST_E2E_STATUS=passed` marker. The lesson kept: **a suite whose skip path exits 0 must be gated on its own success marker, never on its exit code.**
-
-### Risk 2 – ~~`packages/contract` is not a vitest project~~ — **CLOSED (#120)**
-
-Closed: the root `vitest.config.ts` lists four projects, and the config carries the counter-comment. The lesson kept: **a new workspace package needs a line in the root `projects` list, or its tests are decoration.**
-
-### Risk 3 – ~~the CLI's first-run and boot paths have no test at any level~~ — **CLOSED (#43, #62)**
-
-Closed by #43 (`serve` in `test/e2e/package-cli.test.ts`) and #62 (`init` in `project-kit-cli.test.ts`); the unknown-command exit path still has no test. The lesson kept: `index.ts` stays at 0 % in the coverage report because only subprocess tests reach it, so **a file at 0 % that CI exercises through a subprocess looks identical to a file nothing tests.**
+- **A suite whose skip path exits 0 must be gated on its own success marker, never on its exit code.**
+- **A new workspace package needs a line in the root `projects` list, or its tests are decoration.**
+- **A file at 0 % that CI exercises through a subprocess looks identical to a file nothing tests** – `index.ts` is the example.
 
 ---
 
@@ -513,10 +507,6 @@ These were uncovered by the audit and are deliberately **not** child issues.
 6. **No bug was found that warranted a separate bug issue.** Every gap above is a missing test, not
    broken behaviour.
 
-## 8. Labels created for this work
-
-The `epic`, `testing` and `priority-high` labels were created for this work; the epic is #42 with its children attached as native GitHub sub-issues.
-
 ## 9. Method and limits
 
 - Coverage: originally one `npm run test:coverage` run, exit 0, on `feature/coverage-gap-audit` at
@@ -861,15 +851,6 @@ floor now. What was left uncovered in `service.ts` and why: the `closed` answer 
 
 Done in #352, recorded in 10.9; the later measurements are in 10.10 and 10.11. CI adoption remains
 separate work.
-
-### 10.7 Branches no real input reaches (dated finding while #311 was in flight)
-
-- `tools/results-evidence.ts:467` – the "never end a text page inside a surrogate pair" guard
-  cannot fire. A page end inside a pair costs 6 escaped bytes; completing the pair costs 4, so the
-  bisection always prefers the whole pair. A test that pinned the property passed with the guard
-  deleted, and was dropped rather than kept as coverage. Candidate for removal after #311.
-- `tools/task-reads.ts:281-285` – `escapedBytes` prices raw control characters and lone surrogates,
-  but its only input is `JSON.stringify` output, where both are already escaped to ASCII.
 
 ### 10.8 The nightly gate: Stryker over the MCP code
 
