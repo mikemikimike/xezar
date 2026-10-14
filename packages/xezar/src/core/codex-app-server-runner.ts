@@ -128,6 +128,22 @@ export function codexPermissions(
   return { sandbox: networkOff ? 'workspace-write' : 'danger-full-access' };
 }
 
+/**
+ * The thread config that makes `workspace-write` real on Windows (#1009). Codex 0.157.1 on win32
+ * silently downgrades `workspace-write` to `read-only` unless `windows.sandbox` is chosen, and a
+ * read-only sandbox under `approvalPolicy: 'never'` refuses every command ("blocked by policy"),
+ * so every read-only step – and every step under XEZ_CODEX_NETWORK=0 – could run nothing.
+ * `unelevated` is the mode that needs no administrator setup; measured on Windows 11, it still
+ * denies a write outside the workdir, the writable roots and the temp folder. `elevated` failed
+ * there (`code-mode host closed its stdout`). Full access needs no sandbox, so it gets nothing.
+ */
+export function codexWindowsSandboxConfig(
+  sandbox: 'workspace-write' | 'danger-full-access',
+  platform: NodeJS.Platform = process.platform,
+): { windows?: { sandbox: 'unelevated' } } {
+  return platform === 'win32' && sandbox === 'workspace-write' ? { windows: { sandbox: 'unelevated' } } : {};
+}
+
 export interface CodexReadOnlyHook {
   readonly script: string;
   readonly command: string;
@@ -518,6 +534,7 @@ class CodexSession implements AgentSession {
     const config = {
       ...isolation.config,
       ...(permissions.workspaceWrite ? { sandbox_workspace_write: permissions.workspaceWrite } : {}),
+      ...codexWindowsSandboxConfig(permissions.sandbox),
       ...(hook ? { hooks: hook.config } : {}),
     };
     const overrides = {
