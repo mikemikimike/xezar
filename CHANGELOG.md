@@ -1,3 +1,263 @@
+# 0.20.0 (2026-10-14)
+
+## Highlights
+
+xezar now runs natively on Windows, macOS and Linux. On Windows it no longer needs WSL: workflow
+check steps run in Git for Windows' own Git Bash, the project leader connects over MCP through a
+private named pipe, and stopping a task also stops every program it started. On every system, a
+task that is cancelled, paused for its memory limit or stopped at its time limit now also stops the
+background programs it left behind and names them in the task, and a task that was running when
+xezar crashed is cleaned up before it resumes. xezar now needs Node.js 22 or newer, and only Xezar
+Skills 3.0.3 projects are supported. Still missing on Windows: attaching a running Codex session or
+a pi leader (#977, #978), and the MCP leader bridge while xezar runs as administrator.
+
+## 💥 Breaking
+
+- 💥 **xezar needs Node.js 22 or newer.** The supported range moves from Node 20 and later to
+  Node 22 and later; Node 20 reached end of life on 30 April 2026. On Node 20, npm warns
+  `EBADENGINE` at install, or refuses with `engine-strict` set. Upgrade to Node 22 or the current
+  LTS. (#963)
+- 💥 **On Windows, team skill sources on a network share are refused.** `//server/share/…` and
+  every file URL except a local drive one (`file:///C:/…`) are no longer fetched, because opening
+  one sends your Windows sign-in to that server; use an https or ssh address or a local copy.
+  Linux and macOS are unchanged. (#963)
+- 💥 **On Windows, the project folder is shown in Windows form.** Health's `repoRoot`, the start
+  banner and the audit records show `C:\…` instead of Git's `C:/…`, so a script that compared them
+  with a `C:/…` string no longer matches; compare with `C:\…`, or normalize both sides. Linux and
+  macOS are unchanged. (#963)
+- 💥 **Only xezar-skills 3.0.3 projects are documented and supported.** The kit 2.x and engine 0.18
+  fallbacks – prose routing guidance, staying on xezar-skills 2.1.1 – are no longer documented or
+  supported. Projects on kit 2.x must move to 3.0.3 first.
+- 💥 **"Set up this project" and "Re-check now" run the Xezar Skills 3.0.3 onboarding only.** The
+  built-in `project-setup` workflow – the cockpit buttons and the leader's `task_create` – now
+  runs `xez-onboard-opinionated` instead of the retired `xez-onboard`, and the bundled setup
+  templates pin moves from `2c20c60` to the 3.0.3 release (`ec856f8`). A project last checked
+  against the old pin is offered one re-check, and that re-check runs the 3.0.3 onboarding; a
+  project set up with an older kit no longer gets the old setup skill.
+- 💥 **Windows: workflow check steps run in Git Bash, never in WSL.** A check step used to run the
+  first `bash.exe` on PATH, which on a stock install is WSL's. It now runs Git for Windows' own
+  bash with a plain `-c` (no login shell, so PATH and the temp folder stay Windows'), and a missing
+  Git Bash fails the step with a message naming Git for Windows. Linux and macOS keep `bash -lc`.
+  (#963)
+
+## 🔒 Security
+
+- 🔒 **Windows: a project can no longer run its own copy of Git.** Windows looked for a program in
+  the project folder before the system path, so a repository containing a file such as `git.exe`
+  could have it run when xezar called Git. xezar now turns that lookup off for itself and the
+  programs it starts; in a Command Prompt that xezar or an agent starts, start a program in the
+  current folder as `.\name`. (#963)
+- 🔒 **Windows: the `.git` folder stays private in every spelling.** The file view refuses `.GIT`,
+  `.git.` and other spellings Windows opens as the `.git` folder. (#963)
+- 🔒 **Windows: a folder name or a link can no longer run extra commands when xezar opens a
+  terminal or a browser.** These go through the Windows command processor (cmd.exe), which acts on
+  characters such as `&` and `%` in a name. xezar now checks every part first and opens nothing
+  when one would be acted on: the cockpit shows the command to copy instead, and a link is printed.
+  Folder names with spaces, commas, apostrophes or non-English letters still open, in Windows
+  Terminal too. A session that runs under a second agent account opens in the classic console
+  window instead, because Windows Terminal would drop the quotes around that account's folder and
+  point the window at the wrong account. Linux and macOS are unchanged. (#963)
+- 🔒 **Windows: a PATH entry that depends on the current folder no longer finds programs.** An
+  entry such as `.` or `node_modules\.bin` finds a different program in each folder a task runs
+  in, so xezar skips it when it looks for a program to start; list the full folder in PATH
+  instead. Linux and macOS are unchanged. (#963)
+
+## ✨ Features
+
+- ✨ **Windows long-path check.** On Windows, `xezar serve` checks once, after it starts, whether
+  long file paths are on in Windows and in Git, and prints one warning with the fix when either is
+  off. A task whose working copy fails with "Filename too long" carries the same fix in its failure
+  reason. Nothing changes on Linux or macOS. (#963)
+- ✨ **On Windows, `xezar serve` shuts down cleanly with Ctrl+C, Ctrl+Break or by closing its
+  window.** Each one saves xezar's state and stops the programs it started, within a few seconds,
+  and tasks that were running carry on when xezar starts again, as on Linux and macOS. Closing the
+  window gives xezar only about 5 seconds, which on a busy machine may not be enough to stop
+  everything, so prefer Ctrl+C or Ctrl+Break. Before, Ctrl+Break and closing the window ended xezar without saving. `xezar lease gates` also passes
+  Ctrl+Break and a closing window on to the command it runs. (#963)
+- ✨ **A task paused for its memory limit, cancelled or stopped at its time limit now also stops the
+  background programs it started, such as dev servers, and names them in the task.** xezar stops only
+  programs it can prove the task started, never by name or folder. When it cannot confirm which
+  process is the task's agent, it says so in the task rather than skipping the cleanup silently.
+  This is a cleanup, not a sandbox; on macOS a program that detaches and loses its parent within
+  about two seconds can be missed. (#943)
+- ✨ **Every 3.0.3 kit review verdict is recorded on the task.** An architecture review's CONFORMS,
+  CONFORMS WITH FOLLOW-UPS and CONTRADICTS are accepted beside APPROVE and REQUEST CHANGES, and two
+  new reviewer roles, `security-review` (NO FINDINGS AT THIS HEAD, FINDINGS, BLOCKING FINDINGS) and
+  `acceptance-verification` (ALL CRITERIA MET, CRITERIA NOT MET), can be declared as a step's
+  `verdictRole`. Before this their packets were refused, so the leader saw no verdict at all.
+- ✨ **Workflows of up to 12 steps can be saved and run.** The cap was 8, so the 3.0.3 kit's
+  nine-step `localisation` and `performance` workflows loaded but could not be saved again from the
+  cockpit, the API or MCP. One contract constant, `WORKFLOW_MAX_STEPS`, now sets it everywhere.
+- ✨ **A project onboarded outside the cockpit reads as set up.** When a project carries the 3.0.3
+  install record, `.xezar/onboarding.json`, the cockpit's Project setup card and the MCP's
+  onboarding answer report it as set up and offer neither first-time setup nor a re-check. A
+  missing or malformed record changes nothing.
+- ✨ **A 3.0.3 project can file issues through its own kit role.** The issue-filing check now
+  accepts any skill named by the `-issue-create` convention – the project's own role first, then
+  the shared `xez-issue-create` – or the project's `issue-filing` workflow, and reports the skill a
+  filing task would select.
+- ✨ **Windows: the project leader connects over MCP.** On Windows the running xezar now serves its
+  MCP connection on a named pipe with a fresh random name at every start. Its folder is made private
+  to you, SYSTEM and Administrators, and every connection must first prove it holds the key stored
+  there. A stale or foreign endpoint is never dialled. Linux and macOS keep their Unix socket. (#963)
+
+## 🐛 Fixes
+
+- 🐛 **The pi leader no longer announces a socket that does not exist on Node 22.** Node 22
+  silently shortens a Unix socket path that is longer than the system allows and listens on the
+  shortened path; the pi extension now refuses such a path up front (108 bytes on Linux, 104 on
+  macOS and the BSDs), as Node 23 and later already do. (#963)
+- 🐛 **Windows project folders are kept and accepted.** A project saved with a drive-letter or
+  network path (`C:\…`, `\\server\share\…`) no longer disappears on the next start, and Add
+  project, clone and the folder settings accept these paths. Two spellings of one folder, such as
+  `c:\Repo` and `C:\repo`, count as one project. Linux and macOS are unchanged. (#963)
+- 🐛 **Saving on Windows survives a briefly locked file.** When antivirus or search indexing holds a
+  file xezar is replacing, xezar retries for up to about three seconds, and it replaces a file marked
+  read-only, as Linux and macOS already do. If the file stays locked, the error names it and the
+  likely cause. Linux and macOS still make one attempt. On every system, a save that fails now
+  removes its temporary file instead of leaving it next to the file it was replacing. (#963)
+- 🐛 **`~\` means your home folder on Windows.** Folder fields and local skill sources expand `~\…`
+  on Windows the way they expand `~/…` everywhere. (#963)
+- 🐛 **On Windows, agents installed with npm, dry runs and `npm` or `npx` commands now start.**
+  Windows cannot start an npm command (`.cmd`) or a script file on its own, so these failed at
+  once. xezar now runs the program behind an npm command directly, without the command processor
+  (cmd.exe), and runs a `.js` or `.mjs` file with Node, so `XEZ_DRY_RUN=1` and an agent path that
+  names a script work too. Any other `.cmd` or `.bat` file starts only when every argument is
+  plain text; otherwise xezar refuses it with a message that names the file and the argument's
+  position, never its value. Linux and macOS are unchanged. (#963)
+- 🐛 **On Windows, stopping an agent also stops the programs it started.** Windows does not end a
+  program's children with it, so a stopped agent could leave its tools running. xezar now stops
+  them too, checking each one's start time so an unrelated program is never touched, and a stop
+  xezar made no longer reads as an agent error. Linux and macOS are unchanged. (#963)
+- 🐛 **A sign-in check that hangs now stops everything it started within about 12 seconds.**
+  Before, xezar stopped only the agent's own command when its sign-in check timed out, so a
+  background program that command had started kept running. (#894)
+- 🐛 **Windows: a config file swapped for a link after its check is refused.** Windows has no
+  "do not follow links" open flag, so the agent-config reader now checks that the file it opened
+  is still the plain file at that path. (#963)
+- 🐛 **Windows: line endings, renames and folder sizes behave as on Linux and macOS.** A `.gitignore`
+  or `info/exclude` saved with Windows line endings no longer gets a duplicate line; the MCP state
+  writers and the server-install state replace files with the Windows retry; a worktree's size is
+  measured without `du`; seeded personal files are handed to Git with `/` separators. (#963)
+- 🐛 **Windows: path guards read both separators.** The MCP leader's file guard also refuses `.git.`, `.git `
+  and `.git::$INDEX_ALLOCATION`, which Windows opens as `.git`; the OpenCode directory check refuses a `..` written with `\`, and the pi
+  worktree guard reads Windows path words and Git Bash `/c/…` paths. (#963)
+- 🐛 **Windows: the login-shell PATH merge is skipped.** It could read WSL's Linux PATH and join it
+  with `:`, which breaks every `C:\` entry. (#963)
+- 🐛 **Windows: stopping a check step stops what its shell started.** A program whose Git Bash
+  parent had already exited (`nohup`, a subshell) was out of reach of the Windows process walk and
+  kept running; the stop now also reads Git's own process list. (#963)
+- 🐛 **Windows: cancelling or pausing a task also stops what its agent's Git Bash commands left.**
+  A program started from a Git Bash subshell (`nohup … &`) whose shell exited between two process
+  reads was no longer linked to the task; the task's record now keeps each shell's Git Bash process
+  group, read from Git's own process list. (#963)
+- 🐛 **Windows: a paused task's leftover programs are reported as stopped when they are.** The
+  sweep named and stopped them with two PowerShell runs, which on a busy machine went past its
+  10-second limit and reported a stop that had worked as "still running"; it now uses one. (#963)
+- 🐛 **Windows: folder checks accept every spelling of the same folder.** A folder written in
+  another letter case or as an 8.3 short name is recognised as inside the project or browse root;
+  a look-alike sibling (`Root2` next to `Root`) is still refused. (#963)
+- 🐛 **Windows: the read-only command lock reads Codex's PowerShell commands as PowerShell.** A
+  read-only Codex task on Windows must pass a second, PowerShell reading of each command, and
+  program names match with or without `.exe` and in any letter case. Linux and macOS are
+  unchanged. (#963)
+- 🐛 **Closing a project stops its background GitHub lookup.** The lookup and what it started are
+  stopped and awaited, so the project folder can be removed at once on Windows; a cancelled lookup
+  is never cached. (#963)
+- 🐛 **The first health answer after start-up is immediate.** It reuses the agent and repository
+  check xezar just made while starting, instead of starting every agent CLI a second time; the
+  first cockpit load and the first leader call no longer wait seconds for it. (#963)
+- 🐛 **Windows: xezar no longer freezes for about two seconds after start-up.** The first
+  PowerShell a process starts holds its thread for one to two seconds while Windows creates it; xezar
+  now starts PowerShell from a worker thread, so requests, the MCP leader and the cockpit keep being
+  answered. (#963)
+- 🐛 **Windows: a killed xezar no longer blocks the next start with "project data is already in
+  use".** Windows reuses process IDs quickly, so the left-behind claim's ID could name an unrelated
+  program. A claim now also records when its process started, and an ID that now names a later
+  process no longer counts as the writer. Linux and macOS are unchanged. (#963)
+- 🐛 **Windows: a busy machine no longer pauses xezar while it checks the project lock.** The check
+  that tells a left-behind claim from a live one now runs in the background once xezar is serving,
+  and the project list and the lock give the same answer. (#963)
+- 🐛 **Windows: xezar moves to the next port when Windows has reserved the one it wanted.** Windows
+  keeps ranges of ports for itself (Hyper-V, WSL, Docker), and they move on every restart. A port
+  inside such a range used to stop the start with "permission denied"; xezar now tries the next
+  port, as it does for a port in use. Linux and macOS are unchanged. (#963)
+- 🐛 **Two tasks that start at the same moment no longer fail with "failed to read …/commondir".**
+  Git could read the other task's working copy (Git worktree) while it was still being made. xezar
+  now tries once more a moment later. (#963)
+- 🐛 **macOS: cancelling or pausing a task stops the programs its agent had just started.** A
+  program started in the last two seconds before the stop, such as a shell command OpenCode had
+  just begun, was left running. xezar now reads the task's processes once more, for at most two seconds,
+  before it stops the task; a step's time limit is unchanged. (#963)
+- 🐛 **`--output lines` writes whole lines to a file or a pipe.** A long message, such as the reason
+  the MCP leader bridge is unavailable, used to end in `…` at 80 characters even in a log file, where
+  nothing could show the rest. Lines are now cut only on a terminal. (#963)
+- 🐛 **A task that was running when xezar crashed no longer leaves its programs running.** When xezar
+  stopped without a clean shutdown, a shell command, a build or a dev server the task's agent had
+  started kept running, and the restarted xezar resumed the task beside it. The restarted xezar now
+  stops what the interrupted turn left before the task resumes, and says so in the task, as a cancel
+  already does. On Windows and macOS xezar keeps a small list of each running task's processes beside the
+  task's files (`<runId>.processes.json`); it is removed when the task ends, is cancelled or
+  paused, or no longer runs when xezar starts. Linux needs no list. The resumed task waits up to
+  30 seconds for this clean-up, because the first process read after a start is slow on Windows; a
+  cancel or pause still waits at most 10 seconds. (#982)
+
+## 🔧 Changed
+
+- 🔧 **xezar keeps running when a Codex session ends while xezar is still writing to it.** On
+  every system, that failed write could end xezar with an unhandled error; now only the request
+  waiting on it fails. (#963)
+- 🔧 **On macOS, xezar reads the process list in the standard C locale.** Start times and CPU
+  figures now read the same whatever the system language; Linux and Windows are unchanged. (#943)
+- 🔧 **Windows: xezar's MCP connection is unavailable while xezar runs as administrator.** The
+  status says so; start xezar without elevation. (#963)
+- 🔧 **Windows: attaching to a running Codex session or a pi leader is not available yet.** Each
+  attempt fails at once with a clear message instead of a socket error. pi and Codex as task backends
+  are not affected. (#963)
+- 🔧 **Windows is supported natively.** The install notes no longer say "in progress" or send
+  Windows users to WSL. They list what Windows needs: the full Git for Windows (its Git Bash runs
+  workflow check steps) and long paths turned on; the MCP limits on Windows are listed under
+  Changed. (#963)
+
+## 📝 Specs & Documentation
+
+- 📝 **Prerequisites per operating system.** The README's Quick start and the getting-started
+  guide list what each system needs, including Git for Windows and long paths on Windows; the contributing guide lists the
+  extra tools a Windows contributor needs. (#963)
+- 📝 **Setup docs describe the 3.0.3 onboarding.** The getting-started and project-kit guides now
+  present `xez-onboard-opinionated` as the way in, with its limits, preview, single pull request and
+  the 38-workflow kit it installs; the README and leader guide drop the 2.1.1 fallback, and the
+  local-data inventory drops the removed analysis folder.
+- 📝 **Keep agent instructions within their readers’ context budgets.** Route detailed repository guidance to folder-owned instruction files and load model-routing evidence only for project-leader sessions.
+
+## 🚀 CI/CD & Infrastructure
+
+- 🚀 **CI also verifies Node 22, Windows and macOS.** A new job repeats the validation steps on
+  Linux with Node 22, and on Windows and macOS with Node 22 and 24 (plus the current LTS as a
+  canary). It is not a
+  required check, the Windows and macOS legs never fail the run, and the five required checks
+  keep their names. (#963)
+- 🚀 **Line endings are fixed by the repository.** A new `.gitattributes` checks text out with LF
+  on every system and marks images and fonts binary, so a Windows clone holds the same bytes as
+  Linux and macOS. (#963)
+- 🚀 **Tests no longer assume a POSIX machine where they do not need one.** Temporary homes,
+  folder links and npm calls in the test suites go through a small shared helper that keeps the
+  exact Linux and macOS behavior; every remaining Windows skip names its reason and its issue (#963, or #980 for an elevated CI
+  runner). (#963)
+- 🚀 **The MCP tests no longer fail while removing their scratch home.** The team-skills catalog can
+  still be cloning into that home when a test file ends, so removing it now retries on every system,
+  as it already did on Windows. (#985)
+- 🚀 **Windows and macOS CI legs name a fixed Node major.** The matrix adds Node 24 next to Node 22
+  (still informational), keeps `lts/*` as a canary only, and test folders are removed with Node's
+  Windows retry, guarded by a scan test. (#963)
+- 🚀 **The kit-reading tests check the 3.0.3 kit again.** The verdict packet examples in the review
+  skills, the verdict roles and check significance the kit workflows declare, the read-only command
+  lists, the leader routing guide's size and the kit's ignore rules are guarded against the files in
+  `.xezar/` once more. Two architecture-review cases stay pending until the engine accepts that
+  role's 3.0.3 verdict words.
+
+---
+
 # 0.19.0 (2026-09-23)
 
 ## Highlights
