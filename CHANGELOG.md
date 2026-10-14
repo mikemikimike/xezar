@@ -9,7 +9,7 @@ task that is cancelled, paused for its memory limit or stopped at its time limit
 background programs it left behind and names them in the task, and a task that was running when
 xezar crashed is cleaned up before it resumes. xezar now needs Node.js 22 or newer, and only Xezar
 Skills 3.0.3 projects are supported. Still missing on Windows: attaching a running Codex session or
-a pi leader (#978), and the MCP leader bridge while xezar runs as administrator.
+a pi leader (#977, #978), and the MCP leader bridge while xezar runs as administrator.
 
 ## 💥 Breaking
 
