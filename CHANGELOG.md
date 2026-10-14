@@ -234,9 +234,8 @@ a pi leader (#977, #978), and the MCP leader bridge while xezar runs as administ
 
 - 🚀 **CI also verifies Node 22, Windows and macOS.** A new job repeats the validation steps on
   Linux with Node 22, and on Windows and macOS with Node 22 and 24 (plus the current LTS as a
-  canary). It is not a
-  required check, the Windows and macOS legs never fail the run, and the five required checks
-  keep their names. (#963)
+  canary). The Windows and macOS legs on Node 22 and 24 are required checks; the current-LTS legs
+  are not, and the five existing required checks keep their names. (#963)
 - 🚀 **Line endings are fixed by the repository.** A new `.gitattributes` checks text out with LF
   on every system and marks images and fonts binary, so a Windows clone holds the same bytes as
   Linux and macOS. (#963)
