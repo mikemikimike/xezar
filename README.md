@@ -395,8 +395,10 @@ unchanged. See
 
 A Codex run no longer loads the MCP servers, plugins or apps from your own Codex config (#324). To give
 Codex runs a server, declare it in the project's own `.codex/config.toml`, trust the project in Codex,
-keep `~/.codex/config.toml` from adding keys to it, and do not name it `xezar` (reserved for xezar's
-leader bridge). A Codex CLI that cannot answer `config/read` fails the run – update it with
+and do not name it `xezar` (reserved for xezar's leader bridge). The run uses the project's settings
+for it only: when `~/.codex/config.toml` declares the same server, its settings are left out (#1007).
+A setting there that a run cannot leave out – an `env` entry or a `url`, for example – keeps the
+server off for the run, and the run's note names it. A Codex CLI that cannot answer `config/read` fails the run – update it with
 `npm i -g @openai/codex`.
 
 ### Team skills repository

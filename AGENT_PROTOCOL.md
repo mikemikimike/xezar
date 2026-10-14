@@ -241,12 +241,16 @@ Notable fields (full doc-comments in the source):
   no denied ask.
   Configurable restrictive modes are
   specified by `2026-07-17-permission-modes` (pre-rename issue 475).
-- **Codex MCP isolation (#324):** before `thread/start` / `thread/resume` the
-  Codex runner calls `config/read` for the run's cwd and passes a `config`
-  override that switches off every MCP server not declared solely by the
-  project's `.codex/` layer, xezar's own bridge, and the `plugins` / `apps`
-  features (`codex-run-isolation.ts`). An app-server that cannot answer fails
-  the run closed. The other runners do not isolate MCP servers yet.
+- **Codex MCP isolation (#324, #1007):** before `thread/start` / `thread/resume`
+  the Codex runner calls `config/read` (`includeLayers: true`) for the run's cwd
+  and passes a `config` override that switches off every MCP server the
+  project's `.codex/` layer does not declare, xezar's own bridge, and the
+  `plugins` / `apps` features (`codex-run-isolation.ts`). A project server the
+  home config also names gets the project layer's own definition instead —
+  Codex merges an override key by key and cannot unset one, so a home key the
+  project table does not replace keeps the server off, named in the run's note.
+  An app-server that cannot answer fails the run closed. The other runners do
+  not isolate MCP servers yet.
 - `sessionId?` / `resume?` — stable session id for interactive takeover and for
   `--resume` ("Continue" after a run ends).
 

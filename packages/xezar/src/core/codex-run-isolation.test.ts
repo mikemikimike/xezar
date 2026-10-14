@@ -70,6 +70,8 @@ describe('codexRunIsolation (#324)', () => {
     expect(codexRunIsolation({ config: {}, origins: {} })).toEqual({
       config: { features: { plugins: false, apps: false } },
       disabledServers: [],
+      projectOnlyServers: [],
+      keptOff: [],
     });
   });
 
@@ -130,6 +132,138 @@ describe('codexRunIsolation (#324)', () => {
   });
 });
 
+/**
+ * #1007 — a server the project declares and the home config also names. Codex merges a per-thread
+ * override into the layered config key by key (`merge_toml_values` in codex-rs/config: tables merge
+ * recursively, anything else replaces), so these tests merge the override onto the home layer the
+ * same way and compare the result with the project layer alone.
+ */
+function mergeLikeCodex(base: unknown, overlay: unknown): unknown {
+  const isTable = (value: unknown): value is Record<string, unknown> =>
+    !!value && typeof value === 'object' && !Array.isArray(value);
+  if (!isTable(base) || !isTable(overlay)) return overlay;
+  const merged: Record<string, unknown> = JSON.parse(JSON.stringify(base)) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(overlay)) merged[key] = key in merged ? mergeLikeCodex(merged[key], value) : value;
+  return merged;
+}
+
+/** A `config/read` answer with `includeLayers: true` for one server, shaped like codex-cli 0.156.1's. */
+function layeredAnswer(name: string, projectDef: Record<string, unknown>, homeDef: Record<string, unknown>) {
+  const leafOrigins = (def: Record<string, unknown>, layer: unknown, prefix: string): [string, unknown][] =>
+    Object.entries(def).flatMap(([key, value]) => {
+      if (Array.isArray(value)) return value.map((_, i) => [`${prefix}${key}.${i}`, layer] as [string, unknown]);
+      if (value && typeof value === 'object') return leafOrigins(value as Record<string, unknown>, layer, `${prefix}${key}.`);
+      return [[`${prefix}${key}`, layer] as [string, unknown]];
+    });
+  const prefix = `mcp_servers.${name}.`;
+  return {
+    config: { mcp_servers: { [name]: mergeLikeCodex(homeDef, projectDef) } },
+    // Project first: a project key hides the home key of the same path from `origins`.
+    origins: Object.fromEntries([...leafOrigins(homeDef, user, prefix), ...leafOrigins(projectDef, project, prefix)]),
+    layers: [
+      { ...project, config: { mcp_servers: { [name]: projectDef } } } as Record<string, unknown>,
+      { ...user, config: { mcp_servers: { [name]: homeDef } } },
+      { ...system, config: {} },
+    ],
+  };
+}
+
+describe('codexRunIsolation: a project server the home config also names (#1007)', () => {
+  // The reported machine, key for key (values are stand-ins): the project pins the server and sets
+  // a default approval mode; the home config runs `@latest` and approves one tool on its own.
+  const projectDef = {
+    command: 'npx',
+    args: ['-y', 'chrome-devtools-mcp@1.10.1', '--isolated', '--headless'],
+    startup_timeout_sec: 30,
+    default_tools_approval_mode: 'prompt',
+    enabled_tools: ['navigate_page', 'take_screenshot'],
+  };
+  const homeDef = {
+    command: 'npx',
+    args: ['-y', 'chrome-devtools-mcp@latest'],
+    tools: { navigate_page: { approval_mode: 'approve' } },
+  };
+
+  it('keeps the server on and sends the project definition in place of the merged one', () => {
+    const isolation = codexRunIsolation(layeredAnswer('chrome-devtools', projectDef, homeDef));
+    expect(isolation.disabledServers).toEqual([]);
+    expect(isolation.projectOnlyServers).toEqual(['chrome-devtools']);
+    expect(isolation.config).toEqual({
+      mcp_servers: {
+        'chrome-devtools': { ...projectDef, tools: { navigate_page: { approval_mode: 'prompt' } } },
+      },
+      features: { plugins: false, apps: false },
+    });
+  });
+
+  it('lets no home-config key reach the run: home + override behaves as the project layer alone', () => {
+    const isolation = codexRunIsolation(layeredAnswer('chrome-devtools', projectDef, homeDef));
+    const override = (isolation.config.mcp_servers as Record<string, unknown>)['chrome-devtools'];
+    const effective = mergeLikeCodex(homeDef, override) as Record<string, unknown>;
+    // Every key the run gets is the project's, except the one approval mode, which is pinned to
+    // the value the project-only config resolves it to (per-tool mode, else the server default).
+    const { tools, ...rest } = effective;
+    expect(rest).toEqual(projectDef);
+    expect(tools).toEqual({ navigate_page: { approval_mode: projectDef.default_tools_approval_mode } });
+    expect(JSON.stringify(effective)).not.toContain('@latest');
+  });
+
+  it('keeps a server the home config alone declares off, layers or not', () => {
+    const answer = layeredAnswer('ambient', {}, homeDef);
+    answer.layers[0] = { ...project, config: {} };
+    const isolation = codexRunIsolation(answer);
+    expect(isolation.disabledServers).toEqual(['ambient']);
+    expect(isolation.projectOnlyServers).toEqual([]);
+  });
+
+  it.each([
+    ['an env entry', { env: { TOKEN: 'secret-value' } }, 'env.TOKEN'],
+    ['a url beside the project command', { url: 'http://127.0.0.1:9/mcp' }, 'url'],
+    ['a tool approval mode with no project default', { tools: { navigate_page: { approval_mode: 'approve' } } }, 'tools.navigate_page.approval_mode'],
+    ['enabled = false', { enabled: false }, 'enabled'],
+  ])('keeps the server off when the home config adds %s no override can leave out', (_label, homeExtra, key) => {
+    const { default_tools_approval_mode: _ignored, ...withoutDefault } = projectDef;
+    const isolation = codexRunIsolation(layeredAnswer('chrome-devtools', withoutDefault, { ...homeDef, ...homeExtra }));
+    expect(isolation.disabledServers).toEqual(['chrome-devtools']);
+    expect(isolation.projectOnlyServers).toEqual([]);
+    const note = codexIsolationNote(isolation) ?? '';
+    expect(note).toContain(key);
+    // Key paths only: a value from the person's own config never reaches the note.
+    expect(note).not.toContain('secret-value');
+    expect(note).not.toContain('127.0.0.1');
+  });
+
+  it('keeps the server off when Codex reports no layers (an older CLI, or includeLayers ignored)', () => {
+    const { layers: _layers, ...answer } = layeredAnswer('chrome-devtools', projectDef, homeDef);
+    const isolation = codexRunIsolation(answer);
+    expect(isolation.disabledServers).toEqual(['chrome-devtools']);
+    expect(codexIsolationNote(isolation)).toContain("did not report the project's own settings");
+  });
+
+  it('ignores a project layer Codex disabled (an untrusted project)', () => {
+    const answer = layeredAnswer('chrome-devtools', projectDef, homeDef);
+    answer.layers[0] = { ...answer.layers[0], disabledReason: 'add the project as trusted' };
+    expect(codexRunIsolation(answer).disabledServers).toEqual(['chrome-devtools']);
+  });
+
+  it("keeps xezar's bridge off even when the project definition is the bridge (#323)", () => {
+    const bridge = { command: 'npx', args: ['-y', '@qodeca/xezar', 'mcp'] };
+    const isolation = codexRunIsolation(layeredAnswer('leader', bridge, { command: 'node', args: ['home.mjs'] }));
+    expect(isolation.disabledServers).toEqual(['leader']);
+    expect(isolation.projectOnlyServers).toEqual([]);
+  });
+
+  it('puts a project-only definition for a server named __proto__ on the wire', () => {
+    const answer: unknown = JSON.parse(
+      JSON.stringify(layeredAnswer('placeholder', projectDef, homeDef)).replaceAll('placeholder', '__proto__'),
+    );
+    const isolation = codexRunIsolation(answer);
+    expect(isolation.projectOnlyServers).toEqual(['__proto__']);
+    const wire = JSON.parse(JSON.stringify(isolation.config)) as { mcp_servers: Record<string, unknown> };
+    expect(Object.getOwnPropertyDescriptor(wire.mcp_servers, '__proto__')?.value).toMatchObject({ command: 'npx', args: projectDef.args });
+  });
+});
+
 describe('isXezarBridge', () => {
   it.each([
     ['leader', { command: 'npx', args: ['-y', '@qodeca/xezar', 'mcp'] }],
@@ -176,12 +310,17 @@ describe('isXezarBridge', () => {
 
 describe('codexIsolationNote', () => {
   it('names the switched-off servers', () => {
-    const note = codexIsolationNote({ config: {}, disabledServers: ['ambient', 'xezar'] });
+    const note = codexIsolationNote({ config: {}, disabledServers: ['ambient', 'xezar'], projectOnlyServers: [], keptOff: [] });
     expect(note).toContain('off: ambient, xezar');
     expect(note).toContain('plugins and apps are off');
   });
 
   it('stays quiet when nothing was switched off', () => {
-    expect(codexIsolationNote({ config: {}, disabledServers: [] })).toBeNull();
+    expect(codexIsolationNote({ config: {}, disabledServers: [], projectOnlyServers: [], keptOff: [] })).toBeNull();
+  });
+
+  it('says which servers run with the project settings only (#1007)', () => {
+    const note = codexIsolationNote({ config: {}, disabledServers: [], projectOnlyServers: ['chrome-devtools'], keptOff: [] });
+    expect(note).toContain("chrome-devtools runs with the project's own settings only");
   });
 });
