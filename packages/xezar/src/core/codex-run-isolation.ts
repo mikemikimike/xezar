@@ -1,5 +1,5 @@
 /**
- * What a Codex run xezar starts may reach besides Codex itself (#324, #323).
+ * What a Codex run xezar starts may reach besides Codex itself (#324, #323, #1007).
  *
  * `codex app-server` loads every MCP server and plugin the account's own `$CODEX_HOME/config.toml`
  * names — the person's browser, their Messages app, their ChatGPT connectors — and
@@ -10,9 +10,12 @@
  *
  * A run xezar starts gets exactly this instead:
  *
- * - MCP servers the PROJECT alone declares in its own `.codex/config.toml` (a layer Codex reads
- *   only once the person has trusted the project). That file is reviewed with the code, so it is
- *   how a project opts a server in — no xezar setting.
+ * - MCP servers the PROJECT declares in its own `.codex/config.toml` (a layer Codex reads only
+ *   once the person has trusted the project), with the project's settings only. That file is
+ *   reviewed with the code, so it is how a project opts a server in — no xezar setting. When the
+ *   home config names the same server, the run gets the project layer's definition in place of the
+ *   merged one (#1007); when that cannot be done without a home key reaching the run, the server
+ *   stays off and the run's note names the keys. See `projectOnlyDefinition`.
  * - Never xezar's own bridge, even when the project declares it: that is how the person's leader
  *   session reaches xezar, and a task run is not the leader (#323). See `isXezarBridge`.
  * - No plugins and no apps. Both hang off the account, not the project.
@@ -27,6 +30,10 @@ export interface CodexRunIsolation {
   readonly config: Record<string, unknown>;
   /** Servers this run does not get, sorted — named in the run's note. */
   readonly disabledServers: readonly string[];
+  /** Project servers the home config also names, run with the project layer's definition only, sorted. */
+  readonly projectOnlyServers: readonly string[];
+  /** Project servers kept off because no override can leave the home config's keys out, and why. */
+  readonly keptOff: readonly { readonly name: string; readonly reason: string }[];
 }
 
 /** The config layer that may contribute a server to a run: the project's own `.codex/`. */
@@ -36,8 +43,8 @@ const PROJECT_LAYER = 'project';
 const ACCOUNT_FEATURES = ['plugins', 'apps'] as const;
 
 /**
- * Turn a `config/read` answer into the run's overrides. Throws when the answer carries no config:
- * the caller must not start a thread it cannot isolate.
+ * Turn a `config/read` answer (asked with `includeLayers: true`) into the run's overrides. Throws
+ * when the answer carries no config: the caller must not start a thread it cannot isolate.
  */
 export function codexRunIsolation(configRead: unknown): CodexRunIsolation {
   const read = asRecord(configRead);
@@ -45,44 +52,203 @@ export function codexRunIsolation(configRead: unknown): CodexRunIsolation {
   if (!config) throw new Error('codex app-server answered config/read without a config');
   const servers = asRecord(config.mcp_servers) ?? {};
   const origins = asRecord(read?.origins) ?? {};
+  const layers = Array.isArray(read?.layers) ? (read.layers as unknown[]) : undefined;
 
-  const disabledServers = Object.keys(servers)
-    .filter((name) => !isProjectServer(name, origins) || isXezarBridge(name, asRecord(servers[name]) ?? {}))
-    .sort();
+  const disabledServers: string[] = [];
+  const projectOnly: [string, Record<string, unknown>][] = [];
+  const keptOff: { name: string; reason: string }[] = [];
+  for (const name of Object.keys(servers).sort()) {
+    if (isXezarBridge(name, asRecord(servers[name]) ?? {})) {
+      disabledServers.push(name);
+      continue;
+    }
+    const owner = serverOwner(name, origins);
+    if (owner === 'project') continue;
+    if (owner === 'shared') {
+      const built = projectOnlyDefinition(name, origins, layers);
+      if ('definition' in built) {
+        if (!isXezarBridge(name, built.definition)) {
+          projectOnly.push([name, built.definition]);
+          continue;
+        }
+      } else {
+        keptOff.push({ name, reason: built.reason });
+      }
+    }
+    disabledServers.push(name);
+  }
 
   // Built with `Object.fromEntries`, never by assignment into `{}`: a server may be named
   // `__proto__` (TOML allows it, and Codex reports it as an own key), and `obj[name] = …` would call
   // the prototype setter instead of creating a key — the run would say the server is off while the
   // override on the wire carried nothing for it.
-  const mcpServers = Object.fromEntries(disabledServers.map((name) => [name, { enabled: false }]));
+  const mcpServers = Object.fromEntries([
+    ...disabledServers.map((name) => [name, { enabled: false }] as const),
+    ...projectOnly,
+  ]);
   const features = Object.fromEntries(ACCOUNT_FEATURES.map((feature) => [feature, false]));
 
   return {
-    config: disabledServers.length > 0 ? { mcp_servers: mcpServers, features } : { features },
+    config: Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers, features } : { features },
     disabledServers,
+    projectOnlyServers: projectOnly.map(([name]) => name),
+    keptOff,
   };
 }
 
 /**
- * True only when every key Codex reports for the server came from a project layer. A server with
- * no recorded origin, or one the home config merely tweaks (an `env` added to a project server),
- * is not the project's alone and stays off — the safe direction for a mixed answer.
+ * Who set the keys Codex reports for the server: `project` when every one came from a project
+ * layer, `shared` when a project layer and another layer both did, `other` when no project layer
+ * did — or when Codex reported no origin at all, the safe reading of an answer nobody can attribute.
  *
  * This reads the origins Codex reports; it does not require one for every key of the server. It
  * cannot: codex-cli 0.154.0 fills defaults (`enabled`, `environment_id`, `tool_timeout_sec`, an
  * empty `args`) into the answer with no origin at all, so "every key has an origin" would switch
  * off every project server. It therefore relies on Codex reporting an origin for every key a
- * config file set, which is what 0.154.0 was observed to do.
+ * config file set, which is what 0.154.0 was observed to do. A `project` server is sent nothing.
+ * A `shared` one gets the project's own definition or stays off (`projectOnlyDefinition`).
  */
-function isProjectServer(name: string, origins: Record<string, unknown>): boolean {
+function serverOwner(name: string, origins: Record<string, unknown>): 'project' | 'shared' | 'other' {
   const prefix = `mcp_servers.${name}.`;
-  let seen = false;
+  let project = false;
+  let other = false;
   for (const [key, origin] of Object.entries(origins)) {
     if (!key.startsWith(prefix)) continue;
-    seen = true;
-    if (asRecord(asRecord(origin)?.name)?.type !== PROJECT_LAYER) return false;
+    if (layerType(origin) === PROJECT_LAYER) project = true;
+    else other = true;
   }
-  return seen;
+  if (!project) return 'other';
+  return other ? 'shared' : 'project';
+}
+
+/**
+ * The server as the project layer alone defines it, ready to be the run's override — or why it
+ * cannot be (#1007).
+ *
+ * Codex MERGES a per-thread override into the layered config key by key (codex-rs `config_manager`
+ * turns each request key into a CLI override; `merge_toml_values` merges tables recursively and
+ * lets anything else replace), and it has no way to unset a key: a JSON `null` arrives as an empty
+ * string. So sending the project's table keeps out only the home keys the project table also
+ * sets. Every other home key must be covered here, or the server stays off:
+ *
+ * - covered: the project definition sets the same key, or a value above it that is not a table
+ *   (an array such as `args`, which replaces wholesale);
+ * - pinned: `tools.<tool>.approval_mode` takes the project's `default_tools_approval_mode`, the
+ *   value Codex resolves for that tool when only the project's config is read (per-tool mode,
+ *   then the server default);
+ * - anything else (an `env` entry, a `url`, `enabled`, a home approval mode with no project
+ *   default) cannot be left out, so the server stays off and the reason names those key paths —
+ *   never their values, which may be secrets.
+ *
+ * The project definition comes from the answer's `layers` (`includeLayers: true`): every project
+ * layer Codex did not disable (an untrusted project is reported with a `disabledReason`), merged
+ * the way Codex merges them. codex-cli 0.156.1 lists layers highest precedence first; that order
+ * is observed, not documented. The home keys come from every other layer AND from `origins`, so a
+ * key one of the two leaves out still counts.
+ */
+function projectOnlyDefinition(
+  name: string,
+  origins: Record<string, unknown>,
+  layers: unknown[] | undefined,
+): { definition: Record<string, unknown> } | { reason: string } {
+  const unreadable = { reason: "Codex did not report the project's own settings for it" };
+  if (!layers) return unreadable;
+  const projectLayers: Record<string, unknown>[] = [];
+  const homeKeys = new Map<string, string[]>();
+  for (const entry of layers) {
+    const layer = asRecord(entry);
+    const server = asRecord(asRecord(asRecord(layer?.config)?.mcp_servers)?.[name]);
+    if (layerType(layer) === PROJECT_LAYER) {
+      if (server && (layer?.disabledReason === undefined || layer.disabledReason === null)) projectLayers.unshift(server);
+    } else if (server) {
+      for (const path of leafPaths(server)) homeKeys.set(path.join('.'), path);
+    }
+  }
+  if (projectLayers.length === 0) return unreadable;
+  const prefix = `mcp_servers.${name}.`;
+  for (const [key, origin] of Object.entries(origins)) {
+    if (key.startsWith(prefix) && layerType(origin) !== PROJECT_LAYER) homeKeys.set(key.slice(prefix.length), key.slice(prefix.length).split('.'));
+  }
+
+  const definition = projectLayers.reduce<Record<string, unknown>>((merged, layer) => mergeTables(merged, layer), {});
+  const defaultApproval = definition.default_tools_approval_mode;
+  const uncovered: string[] = [];
+  for (const [key, path] of homeKeys) {
+    if (covers(definition, path)) continue;
+    if (path.length === 3 && path[0] === 'tools' && path[2] === 'approval_mode' && typeof defaultApproval === 'string') {
+      setLeaf(definition, path, defaultApproval);
+      continue;
+    }
+    uncovered.push(key);
+  }
+  if (uncovered.length > 0) {
+    return { reason: `your own Codex config also sets ${uncovered.sort().join(', ')} for it, which a run cannot leave out` };
+  }
+  return { definition };
+}
+
+/** The layer type an `origins` entry or a `layers` entry names (`project`, `user`, `system`, …). */
+function layerType(value: unknown): unknown {
+  return asRecord(asRecord(value)?.name)?.type;
+}
+
+/** Every key path in a table that holds a value; an array is one value, an empty table none. */
+function leafPaths(table: Record<string, unknown>, above: string[] = []): string[][] {
+  return Object.entries(table).flatMap(([key, value]) => {
+    const inner = asRecord(value);
+    return inner ? leafPaths(inner, [...above, key]) : [[...above, key]];
+  });
+}
+
+/** True when merging `definition` over a layer that sets `path` replaces that key. */
+function covers(definition: Record<string, unknown>, path: readonly string[]): boolean {
+  let current: unknown = definition;
+  for (const key of path) {
+    const table = asRecord(current);
+    if (!table) return true;
+    if (!Object.hasOwn(table, key)) return false;
+    current = table[key];
+  }
+  return true;
+}
+
+/** `overlay` merged onto a copy of `base` the way Codex merges layers; own keys only, `__proto__` safe. */
+function mergeTables(base: Record<string, unknown>, overlay: Record<string, unknown>): Record<string, unknown> {
+  const merged = copyTable(base);
+  for (const [key, value] of Object.entries(overlay)) {
+    const below = Object.hasOwn(merged, key) ? asRecord(merged[key]) : undefined;
+    const above = asRecord(value);
+    defineKey(merged, key, below && above ? mergeTables(below, above) : copyValue(value));
+  }
+  return merged;
+}
+
+function setLeaf(table: Record<string, unknown>, path: readonly string[], value: unknown): void {
+  let current = table;
+  for (const key of path.slice(0, -1)) {
+    const next = Object.hasOwn(current, key) ? asRecord(current[key]) : undefined;
+    const table = next ?? {};
+    if (!next) defineKey(current, key, table);
+    current = table;
+  }
+  defineKey(current, path[path.length - 1]!, value);
+}
+
+function copyTable(table: Record<string, unknown>): Record<string, unknown> {
+  const copy: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(table)) defineKey(copy, key, copyValue(value));
+  return copy;
+}
+
+function copyValue(value: unknown): unknown {
+  const table = asRecord(value);
+  if (table) return copyTable(table);
+  return Array.isArray(value) ? value.map(copyValue) : value;
+}
+
+/** An own, enumerable key even when it is named `__proto__` (see the comment in `codexRunIsolation`). */
+function defineKey(table: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(table, key, { value, enumerable: true, writable: true, configurable: true });
 }
 
 /** The server name the cockpit's setup card registers xezar's bridge under. Reserved: see below. */
@@ -143,12 +309,25 @@ function launchWords(server: Record<string, unknown>): string[] {
 
 /** The run note that says what the person's own config did not contribute, or null. */
 export function codexIsolationNote(isolation: CodexRunIsolation): string | null {
-  if (isolation.disabledServers.length === 0) return null;
-  return (
-    `codex: this run does not load MCP servers from your own Codex config or xezar's leader bridge ` +
-    `(off: ${isolation.disabledServers.join(', ')}); Codex plugins and apps are off too. ` +
-    `A server that only the project's trusted .codex/config.toml declares still loads (#324).`
-  );
+  const parts: string[] = [];
+  if (isolation.disabledServers.length > 0) {
+    parts.push(
+      `codex: this run does not load MCP servers from your own Codex config or xezar's leader bridge ` +
+        `(off: ${isolation.disabledServers.join(', ')}); Codex plugins and apps are off too. ` +
+        `A server the project's trusted .codex/config.toml declares still loads, with the project's settings only (#324).`,
+    );
+  }
+  for (const { name, reason } of isolation.keptOff) {
+    parts.push(`codex: the project server ${name} stays off because ${reason} (#1007).`);
+  }
+  if (isolation.projectOnlyServers.length > 0) {
+    const names = isolation.projectOnlyServers.join(', ');
+    parts.push(
+      `codex: ${names} ${isolation.projectOnlyServers.length === 1 ? 'runs' : 'run'} with the project's own settings only; ` +
+        `your own Codex config's settings for ${isolation.projectOnlyServers.length === 1 ? 'it' : 'them'} are not used (#1007).`,
+    );
+  }
+  return parts.length > 0 ? parts.join(' ') : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
