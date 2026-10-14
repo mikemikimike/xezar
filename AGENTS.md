@@ -1,6 +1,6 @@
 # AGENTS.md — working in this repository
 
-xezar is a **parallel coding-agents orchestrator**: a local cockpit (CLI + browser GUI) for running and tracking AI coding-agent tasks in a repo, with Claude Code, Codex, OpenCode (experimental) or pi as the backend, or a mix per step. In a git repo a task runs in its own worktree by default; the composer's Worktree toggle (`worktree: false`) runs it in the repo working tree under the repository-root lease instead, a non-git directory always runs in place, and a git task that asks for isolation stops as `failed` if its worktree cannot be created (it never falls back to your checkout). The diff-first review gate is optional and OFF by default: the Settings → Agents toggle (`reviewGate` in `.xezar/config.json`) wins when set, otherwise only `XEZ_REVIEW_GATE=1` turns it on, and autonomous runs always skip it. Whether or not a run parks at `review`, xezar never auto-merges — a finished run can be pushed as a draft PR through `gh`, and merging stays with you. Everything is local: no accounts, no database, no cloud — runtime state is plain JSON, NDJSON and Markdown under `.local/xezar/`; maintained project workflows, skills and guidance live in `.xezar/`. The server stack stays deliberately small: strict TypeScript (ESM, Node 22+), Hono + SSE, Zod at every boundary, and YAML workflows. The cockpit is React 19 + Vite + Tailwind v4 + shadcn/ui, compiled to static assets. Every module is meant to be read in one sitting.
+xezar is a **parallel coding-agents orchestrator**: a local cockpit (CLI + browser GUI) for running and tracking AI coding-agent tasks in a repo, with Claude Code, Codex, OpenCode (experimental) or pi as the backend, or a mix per step. A git task runs in its own isolated worktree by default and never falls back to your checkout (details: `packages/xezar/src/AGENTS.md` § Git / worktree logic). xezar never auto-merges — a finished run can be pushed as a draft PR through `gh`, and merging stays with you. Everything is local: no accounts, no database, no cloud — runtime state is plain JSON, NDJSON and Markdown under `.local/xezar/`; maintained project workflows, skills and guidance live in `.xezar/`. The server stack stays deliberately small, with Zod at every boundary, and every module is meant to be read in one sitting.
 
 ## Zero config
 
@@ -17,7 +17,7 @@ Practical rules:
 - A missing dependency, an absent peer, a read-only home: degrade to a smaller working cockpit, never fail the boot.
 - Prefer a proxy-free, daemon-free mechanism when one exists — and when it doesn't, keep the mechanism invisible: no process to manage, no port to remember, no file to edit.
 - Never trade a working default for a knob.
-- Adding, renaming, or removing a `XEZ_*` env var — or changing what its default does, or giving it a STORED config key that supersedes it at runtime — MUST update `.env.example` in the same commit (and the README env table when the var is user-facing). That last case is the one people miss: `XEZ_FOLLOWUPS` and `XEZ_ENV_PASSTHROUGH` are now boot-time defaults behind a stored workspace key, so the var still exists and no longer decides. `.env.example` is the env contract's single documentation surface; an undocumented env var is a bug.
+- Adding, renaming, or removing a `XEZ_*` env var — or changing what its default does, or giving it a *stored* config key that supersedes it at runtime — updates `.env.example` in the same commit (and the README env table when the var is user-facing). That last case is the one people miss: `XEZ_FOLLOWUPS` and `XEZ_ENV_PASSTHROUGH` are now boot-time defaults behind a stored workspace key, so the var still exists and no longer decides. `.env.example` is the env contract's single documentation surface; an undocumented env var is a bug.
 
 ## Generic instructions
 
@@ -48,14 +48,13 @@ Practical rules:
   against supplied material; scientific research — revise a paper section and check citations,
   methods and stated limitations against provided sources. No example authorizes publication.
 
-The owner's Q1 decision (2026-09-16, [#466](https://github.com/qodeca/xezar/issues/466))
-allows exact capability references: shipped help **may** name a client's own instruction file,
+Exact capability references are allowed ([#466](https://github.com/qodeca/xezar/issues/466)): shipped help **may** name a client's own instruction file,
 such as `AGENTS.md` or `CLAUDE.md`, to say what that client reads. It must **never** tell users
 to adopt Xezar's own files or process – this repository's process documents, gates, `.xezar/`
 files, checks or workflows, or our AGENTS.md and review conventions. Preserve user-authored guidance
 and supported client filenames; neither is permission to distribute our project instructions.
 
-[PR #481](https://github.com/qodeca/xezar/pull/481) adds the enforcement: the instruction-producer
+The enforcement is the instruction-producer
 guard `packages/xezar/src/release/generic-instructions.test.ts` and the `check:pack` scan of
 actual packed-archive text. The producer guard and archive scan complement each other; a word
 list alone cannot establish that instructions work across domains. Exceptions for capability
@@ -70,15 +69,15 @@ A string a user will read ships generic; a rule this repo follows stays in AGENT
 
 Replacing working behavior is the highest-risk change in this repo, and it fails in a
 characteristic way: the new mechanism is correct, the tests are green, the spec is
-thorough — and the DEFAULT path quietly lost a guarantee nobody wrote down. The seven
+thorough — and the *default* path quietly lost a guarantee nobody wrote down. The seven
 rules below are what that keeps costing; the worked examples behind six of them (all but “Prove the regression test fails without the fix”) are in
 [docs/lessons/changing-working-mechanisms.md](docs/lessons/changing-working-mechanisms.md).
 
-**Name what the old mechanism was load-bearing FOR, not what it was for.** Those are
+**Name what the old mechanism was load-bearing *for*, not what it was for.** Those are
 different questions, and the second one is the one specs answer. Before deleting a timer,
 lock, cap or timeout, grep for everything that reaches a terminal state *because* of it.
 
-**A replacement that ships OFF is not a replacement.** Diff the default path, not the
+**A replacement that ships off is not a replacement.** Diff the default path, not the
 feature. The question is always: *with every new knob at its shipped default, what does
 the old scenario do now?* If the answer is "nothing", the change removed a mechanism and
 added a setting. See § Zero config: *never trade a working default for a knob*.
@@ -87,7 +86,7 @@ added a setting. See § Zero config: *never trade a working default for a knob*.
 question that finds these bugs in one step. A state whose only on-by-default exit is "a
 human types something" is a dead end, however well it renders.
 
-**Find every construction site of a shared in-memory object — grep the TYPE, not the
+**Find every construction site of a shared in-memory object — grep the type, not the
 field.** When you add a field that a delivery path reads, add it everywhere in the same
 commit, or route both sites through one helper. Half the sites is half a fix.
 
@@ -99,7 +98,7 @@ pass-through with a test that pins the *empty or absent input* case: against emp
 run the new test, confirm red, `git stash pop`. A test written after the diagnosis passes
 against the bug more often than anyone expects, and a green-either-way test is how the
 same regression ships twice. Keep the guard tests that pass both ways — they pin the
-behavior you did NOT want to change — but know which is which.
+behavior you did not want to change — but know which is which.
 
 **Read the run-history evidence before theorizing, and cite it.** `git log -S` and
 `git merge-base --is-ancestor <commit> <tag>` settle "was this in the release the user is
@@ -110,34 +109,19 @@ on", and a user's "it worked in 0.9.1" is a testable claim, not an opinion.
 Four invariants. A feature that breaks any of them compiles on its own branch and stops working
 when it lands — pre-rename issue 694 arrived with eleven unreachable routes for exactly this reason.
 
-- **Every RESPONSE shape is a zod schema in `packages/contract`, with its TypeScript type
-  inferred from it (`z.infer`)** — `contract-parity*.test.ts` asserts each is mutually assignable
-  with the route's own inferred type, so that half is enforced. **Request schemas belong there
-  too**, but some are still declared in `server.ts` (migration progress: [docs/STATUS.md](docs/STATUS.md)).
-  A migrated request schema is pinned against its route in both directions by
-  `contract-parity.requests.test.ts`, the way the response files are. Two things travel WITH a
-  migrated schema and are behaviour a type cannot carry, as the settings schemas
-  (`setConfigInputSchema` / `setWorkspaceConfigInputSchema`) show: `systemPrompt`'s custom
-  `'must be at most 20000 characters'` message and the shape's key ORDER, which decides the field
-  order of a multi-issue `{ error }` string. A request schema you migrate carries its own equivalents. Never hand-write an API TYPE, and never
-  declare one in `server.ts` or in the api-client; when you touch a request shape, move it to
-  `packages/contract` and delete the local copy rather than editing the copy. The api-client re-exports the contract; the cockpit imports
-  the schema when it wants to validate and the type when it wants to compile.
-- **Register routes by CHAINING them into a family builder**, the way the ~27 families in
-  `server.ts` already do. Hono accumulates route types through the chain only: a loose
-  `app.get(…)` statement returns a value nobody keeps, so the route vanishes from `AppType` and
-  the typed client cannot see it — silently, with the server still serving it.
-- **Validate bodies, path params and the query string as route MIDDLEWARE**, through the trio in
-  `src/server/validators.ts`. Parsing inside a handler is invisible to hono, which is what let
-  `POST /runs` accept `{ totalNonsense: 12345 }` from a typed client without complaint.
+- **Every request and response shape is a zod schema in `packages/contract`, with its TypeScript
+  type inferred (`z.infer`).** Never hand-write an API type, and never declare one in `server.ts`
+  or in the api-client.
+- **Register routes by chaining them into a family builder.** A loose `app.get(…)` drops out of
+  `AppType`, so the typed client cannot see the route while the server still serves it.
+- **Validate bodies, path params and the query string as route middleware**, through the trio in
+  `src/server/validators.ts`. Parsing inside a handler is invisible to hono.
 - **Everything answers under `/api/v1`** (project-scoped: `/api/v1/p/:projectId/…`).
 
-The contract must describe EXACTLY what the route sends — no wider, no narrower. When a schema and
-its route disagree, fix the SOURCE, never widen the schema; `contract-parity*.test.ts` asserts both
-directions and a one-way check passes on real drift. Two mismatches recur often enough to name:
-writing `key: maybeUndefined` types a key as always-present that `JSON.stringify` drops from the
-wire (spread it conditionally), and an object-literal `type: 'x'` widens to `string` during hono's
-inference, erasing a discriminant consumers narrow on (`as const`).
+The contract describes exactly what the route sends: when they disagree, fix the source, never
+widen the schema. The reasons, the request-schema migration rules and the two recurring
+mismatches are in `packages/contract/src/AGENTS.md` § The HTTP API in detail — read it before
+you touch a route or a shape.
 
 ## Repository layout
 
@@ -146,8 +130,8 @@ Four npm workspaces under a `private` root that publishes nothing itself. Exactl
 | Path | Package | What it is |
 | --- | --- | --- |
 | `packages/xezar` | `@qodeca/xezar` | The service + CLI, and everything behind them (runs, workflows, agent runners, workspace state). The published artifact: `bin`, plus the built cockpit in `web/dist`. |
-| `packages/contract` | `@qodeca/xezar-contract` | The HTTP contract itself: every request and response as a zod schema with its TypeScript type inferred from it, so no shape is written twice. **Node-free on the same terms as the api-client** (`lib: ["ES2022"]`, `types: []` in its tsconfig make a `node:*` import a compile error). `private`, and that has a cost: the service imports a contract VALUE (`workspaceUiStateSchema`, in `workspace/migrations.ts`), so a published tarball naming a package npm has never seen would fail on install. `packages/xezar/scripts/inline-contract.mjs` runs as `postbuild` to fold the contract into `dist/contract/` — bundle AND declarations — and repoint the emitted references. Delete that script the day the contract is published, or the day nothing in the service imports a contract value. |
-| `packages/api-client` | `@qodeca/xezar-api-client` | The contract between the two: the typed client over `AppType`, the SSE/protocol types, and the scope helpers. Re-exports `packages/contract` so a consumer needs one import. **Node-free by construction** — no `node:*`, no `@types/node` — because it is bundled into a browser AND imported by the Node service. `private` for now: versioned with the release but not on npm. The service may therefore only import it in TESTS — a runtime import would make the published CLI depend on something npm cannot resolve. |
+| `packages/contract` | `@qodeca/xezar-contract` | The HTTP contract itself: every request and response as a zod schema with its TypeScript type inferred from it, so no shape is written twice. **Node-free on the same terms as the api-client** (`lib: ["ES2022"]`, `types: []` in its tsconfig make a `node:*` import a compile error). `private`, and that has a cost: the service imports a contract *value* (`workspaceUiStateSchema`, in `workspace/migrations.ts`), so a published tarball naming a package npm has never seen would fail on install. `packages/xezar/scripts/inline-contract.mjs` runs as `postbuild` to fold the contract into `dist/contract/` — bundle and declarations — and repoint the emitted references. Delete that script the day the contract is published, or the day nothing in the service imports a contract value. |
+| `packages/api-client` | `@qodeca/xezar-api-client` | The contract between the two: the typed client over `AppType`, the SSE/protocol types, and the scope helpers. Re-exports `packages/contract` so a consumer needs one import. **Node-free by construction** — no `node:*`, no `@types/node` — because it is bundled into a browser and imported by the Node service. `private` for now: versioned with the release but not on npm. The service may therefore only import it in tests — a runtime import would make the published CLI depend on something npm cannot resolve. |
 | `packages/web` | `@qodeca/xezar-web` | The cockpit SPA. Private; its output is an artifact of the service (`vite build` writes into `packages/xezar/web/dist`, which the CLI ships and serves). |
 
 Rules that follow from that:
@@ -155,7 +139,7 @@ Rules that follow from that:
 - **The CLI is not a separate package and should not become one.** It is the same program as the service — `packages/xezar/src/index.ts` boots `startServer`, but also `RunManager`, the workspace registry and the worktree machinery, and `xezar run` executes a workflow with no server at all.
 - A dependency belongs to the workspace that imports it. The root carries only what spans all four (`typescript`, `vitest`, `@vitest/coverage-v8`, `tsx`). A build script counts as an importer: `packages/xezar/scripts/inline-contract.mjs` reaches for `esbuild`, so `esbuild` is a devDependency of `packages/xezar` rather than something inherited from whatever vite happens to hoist.
 - Cross-package imports go through the package name, never a relative path — the exceptions are test-only reaches into `packages/xezar/src` — golden fixtures, the pure helper `runs/task-refs` a cockpit test re-checks, and the MCP `EventJournal`/`LeaderDelivery` classes `mcp-leader-control.owner-switch.test.tsx` drives — and they are ugly on purpose.
-- The repo root keeps only what spans workspaces: `scripts/dev.mjs` (boots both halves), `scripts/release.mjs` (a release spans every package), `scripts/test-local-state.mjs` (read by every vitest config, by `packages/xezar/vitest.setup.ts` and by both node:test gates; on Node 22 for Windows it also makes `fs.rmSync` honour `maxRetries`), the browser-suite trio `scripts/e2e.sh` + `scripts/test-env-up.sh` + `scripts/test-env-down.sh` (it boots the server package and drives the web package) with `scripts/test-env-windows.mjs` (the Windows identity check and stop both test-env scripts use), `scripts/migrate-local-state.mjs`, `scripts/check-links.mjs` (the offline link check across all docs), and the leader launcher pair `scripts/xezar-leader.sh` + `scripts/xezar-leader-settings.json`. Everything else lives in the package that owns it.
+- The repo root keeps only what spans workspaces (see `scripts/`). One non-obvious entry: `scripts/test-local-state.mjs` is read by every vitest config, by `packages/xezar/vitest.setup.ts` and by both node:test gates, and on Node 22 for Windows it also makes `fs.rmSync` honour `maxRetries`. Everything else lives in the package that owns it.
 
 ## Task routing
 
@@ -184,7 +168,7 @@ Rules that follow from that:
 
 `npm test` and `npm run test:unit` are the fast unit gate: no server, no browser. They must stay that way.
 
-**The root `vitest.config.ts` caps worker fan-out at `min(4, availableParallelism() - 1)`, and that is a guarantee, not a tuning knob.** Vitest's own default (`availableParallelism() - 1`) is right for a laptop running one suite and wrong for a cockpit running several gate runs at once: ten concurrent gates on an 18-core box meant roughly 180 worker processes, and the measured consequence was starvation rather than a bug — unrelated suites timing out at 909s on a single file, and a different 17 files failing every run. Raising or deleting the cap re-creates exactly that. Note that it is a deliberate NO-OP on CI (a 2-core runner resolves to 1, a 4-core to 3), so a green CI run is not evidence the cap works, and CI timing cannot validate a change to it. Both runtime overrides still win for the unit gate when you genuinely need more: `npm test -- --maxWorkers=N`, and `VITEST_MAX_WORKERS`, which vitest applies at the very END of config resolution and therefore outranks every config file AND `--no-file-parallelism` on the command line. **That last property makes `VITEST_MAX_WORKERS` unsafe to export globally**, and the browser suite defends itself from it: `packages/web/e2e/vitest.config.ts` DELETES the variable before vitest reads it (#162). Those specs share one server, one machine and one set of on-disk fixtures — several rewrite state global to all of it — so running them concurrently is a correctness break, not a speed choice, and it produced four rounds of failures in files the change under test never touched. `packages/web/src/e2e-file-parallelism.test.ts` fails if that deletion stops working. Export the variable for `npm test` if you like; never assume it reaches `npm run test:e2e`. `npm run test:package` needs a completed `npm run build` (it packs the tarball).
+**The root `vitest.config.ts` caps worker fan-out at `min(4, availableParallelism() - 1)`, and that is a guarantee, not a tuning knob.** Without it, several concurrent gate runs starved each other (the full story is in the comment above `MAX_WORKERS` in `vitest.config.ts`); raising or deleting the cap re-creates that. It is a deliberate no-op on CI, so a green CI run is not evidence the cap works. Both runtime overrides still win for the unit gate when you genuinely need more: `npm test -- --maxWorkers=N`, and `VITEST_MAX_WORKERS`, which vitest applies at the very end of config resolution and therefore outranks every config file and `--no-file-parallelism` on the command line. **That last property makes `VITEST_MAX_WORKERS` unsafe to export globally**, and the browser suite defends itself from it: `packages/web/e2e/vitest.config.ts` deletes the variable before vitest reads it (#162). Those specs share one server, one machine and one set of on-disk fixtures — several rewrite state global to all of it — so running them concurrently is a correctness break, not a speed choice, and it produced four rounds of failures in files the change under test never touched. `packages/web/src/e2e-file-parallelism.test.ts` fails if that deletion stops working. Export the variable for `npm test` if you like; never assume it reaches `npm run test:e2e`. `npm run test:package` needs a completed `npm run build` (it packs the tarball).
 
 Coverage and mutation detail lives in [docs/testing/coverage-gaps.md](docs/testing/coverage-gaps.md).
 
@@ -201,12 +185,6 @@ npm test -- -t "the name of one test"
 
 Browser-suite execution and isolation detail lives in [docs/testing/agent-browser.md](docs/testing/agent-browser.md).
 
-## Related documents
-
-- `AGENT_PROTOCOL.md` — the agent protocol: the runner seam, the v1 `AgentEvent` + v2 `UiEvent` streams, per-backend mapping, the golden-fixture testing contract, and the checklist for adding a new runner.
-- `docs/testing/agent-browser.md` — the browser suite: prerequisites, the two caches, what the boot pins, iterating on one spec, and the two rules it learned the hard way.
-- `docs/lessons/changing-working-mechanisms.md` — the worked examples behind § Changing a mechanism that already works.
-
 Bare `#n` means `qodeca/xezar`.
 
 <!-- xezar-onboarding: start — added by the opinionated setup; edit freely, keep the markers -->
@@ -216,9 +194,7 @@ This repository is run by a project leader on the xezar engine. The process is i
 review rules in `CODE_REVIEW.md`, protected public surfaces in `BACKWARD_COMPATIBILITY.md`, and
 the kit itself (workflows, checks, role skills, routing) in `.xezar/`.
 
-- **The gate** is one command, run in the foreground: `bash .xezar/checks/repo-gates.sh` — `npm ci`,
-  the security scan, `npm run typecheck`, `npm test`, `npm run test:unit`, `npm run build`,
-  `npm run test:package`, then the repository checks.
+- **The gate** is one command, run in the foreground: `bash .xezar/checks/repo-gates.sh`.
 - **Changing a mechanism that already works** is the rule of that name above; it applies to the
   kit's own checks and workflows exactly as it applies to the product.
 - **The leader** starts only through `scripts/xezar-leader.sh`, which sets `XEZAR_LEADER=1`. Any
