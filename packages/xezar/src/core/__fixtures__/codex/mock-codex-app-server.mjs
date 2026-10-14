@@ -20,6 +20,9 @@
 // the home config tweaks and a home server named `__proto__` — and
 // thread/start|resume refuse a `config` that does not switch off
 // everything but the project's own server, plugins and apps included.
+// #1007: it also reports `clash`, a project server the home config names too.
+// Asked with `includeLayers: true`, the answer carries each layer's own table,
+// and the thread must get `clash` as the project layer alone defines it.
 // `MOCK_CODEX_CONFIG_READ_ERROR=1` answers `config/read` with an error, the
 // shape of a Codex CLI that cannot say which servers it would load.
 //
@@ -37,7 +40,12 @@ const ambient = process.env.MOCK_CODEX_AMBIENT === '1';
 let registeredHook;
 let hookTrusted = false;
 
-function configReadResult() {
+const CLASH_PROJECT = { command: 'node', args: ['tools/clash.mjs'], default_tools_approval_mode: 'prompt' };
+const CLASH_HOME = { command: 'npx', args: ['-y', 'clash-mcp@latest'], tools: { probe: { approval_mode: 'approve' } } };
+/** What the thread must carry for `clash`: the project table, the home tool's mode pinned to the project default. */
+const CLASH_OVERRIDE = { ...CLASH_PROJECT, tools: { probe: { approval_mode: 'prompt' } } };
+
+function configReadResult(params) {
   if (!ambient) return { config: { mcp_servers: {} }, origins: {} };
   const user = { name: { type: 'user', file: '/home/u/.codex/config.toml', profile: null }, version: 'sha256:u' };
   const project = { name: { type: 'project', dotCodexFolder: '/repo/.codex' }, version: 'sha256:p' };
@@ -52,6 +60,7 @@ function configReadResult() {
         // through node running the package's bin directly.
         envleader: { command: '/usr/bin/env', args: ['xezar', 'mcp'] },
         nodeleader: { command: 'node', args: ['/opt/node_modules/@qodeca/xezar/dist/index.js', 'mcp'] },
+        clash: { ...CLASH_PROJECT, tools: CLASH_HOME.tools },
       },
     },
     origins: {
@@ -67,8 +76,35 @@ function configReadResult() {
       'mcp_servers.nodeleader.command': project,
       'mcp_servers.nodeleader.args.0': project,
       'mcp_servers.__proto__.command': user,
+      'mcp_servers.clash.command': project,
+      'mcp_servers.clash.args.0': project,
+      'mcp_servers.clash.default_tools_approval_mode': project,
+      'mcp_servers.clash.tools.probe.approval_mode': user,
     },
   };
+  if (params?.includeLayers === true) {
+    result.layers = [
+      {
+        ...project,
+        config: { mcp_servers: {
+          projsrv: { command: 'node', args: ['tools/mcp.mjs'] },
+          xezar: { command: 'npx' },
+          mixed: { command: 'node' },
+          envleader: { command: '/usr/bin/env', args: ['xezar', 'mcp'] },
+          nodeleader: { command: 'node', args: ['/opt/node_modules/@qodeca/xezar/dist/index.js', 'mcp'] },
+          clash: CLASH_PROJECT,
+        } },
+      },
+      {
+        ...user,
+        config: { mcp_servers: {
+          ambient: { command: 'npx', args: ['-y', 'chrome-devtools-mcp@latest'] },
+          mixed: { env: { TOOL_HOME: '/home/u/tool' } },
+          clash: CLASH_HOME,
+        } },
+      },
+    ];
+  }
   // A home server named `__proto__`, as an OWN key — the way JSON.parse delivers it from the
   // real app-server (observed with codex-cli 0.154.0). An object literal cannot spell that.
   Object.defineProperty(result.config.mcp_servers, '__proto__', {
@@ -89,6 +125,7 @@ function isolationProblem(config) {
     if (!Object.hasOwn(servers, name) || servers[name]?.enabled !== false) return `MCP server ${name} was not switched off`;
   }
   if (servers.projsrv?.enabled === false) return 'the project server projsrv was switched off';
+  if (JSON.stringify(servers.clash) !== JSON.stringify(CLASH_OVERRIDE)) return 'the project server clash did not get the project-only definition';
   if (config?.features?.plugins !== false || config?.features?.apps !== false) return 'plugins and apps were not switched off';
   return null;
 }
@@ -128,7 +165,7 @@ rl.on('line', (line) => {
   } else if (msg.method === 'config/read') {
     emit(process.env.MOCK_CODEX_CONFIG_READ_ERROR === '1'
       ? { id: msg.id, error: { code: -32601, message: 'Method not found: config/read' } }
-      : { id: msg.id, result: configReadResult() });
+      : { id: msg.id, result: configReadResult(msg.params) });
   } else if (msg.method === 'hooks/list') {
     const hook = registeredHook
       ? [{

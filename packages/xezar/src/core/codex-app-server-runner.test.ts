@@ -547,6 +547,12 @@ describe("a Codex run does not reach the person's own MCP servers (#324)", () =>
     const notes = events.flatMap((event) => (event.type === 'note' ? [event.message] : []));
     expect(notes.some((note) => note.includes('off: __proto__, ambient, envleader, mixed, nodeleader, xezar'))).toBe(true);
     expect(notes.join('\n')).not.toContain('projsrv');
+    // #1007: the project server the home config also names runs on the project's definition
+    // (the mock refuses the thread otherwise), and `mixed`, whose home `env` no override can
+    // leave out, stays off with the key path named.
+    expect(notes.join('\n')).toContain("clash runs with the project's own settings only");
+    expect(notes.join('\n')).toContain('the project server mixed stays off because your own Codex config also sets env.TOOL_HOME');
+    expect(notes.join('\n')).not.toContain('/home/u/tool');
   }, 15_000);
 
   it('keeps the same isolation when a stored thread is resumed', async () => {
