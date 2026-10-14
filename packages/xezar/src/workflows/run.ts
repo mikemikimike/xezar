@@ -5163,6 +5163,19 @@ export class RunManager {
     }
   }
 
+  /** A check step's environment: the engine's own, plus `XEZ_PR_NUMBER` when the run knows its
+   *  PR (#1006), so a workflow can check that PR out before a read-only review agent starts —
+   *  a Codex read-only step's sandbox cannot write git. Read at spawn, so a PR a previous step
+   *  reported (`applyMarkerRefs`) counts. When the run knows none, the key is removed rather than
+   *  inherited: a nested xezar's own value would name another task's PR. Deliberately NOT
+   *  `XEZ_TASK_ID`: the process sweeper attributes programs by it (src/AGENTS.md § Run process
+   *  sweep), and the kit derives the task from the worktree directory. */
+  private checkStepEnv(runId: string): NodeJS.ProcessEnv {
+    const { XEZ_PR_NUMBER: _inherited, ...env } = process.env;
+    const prNumber = this.store.getRun(runId)?.prNumber;
+    return prNumber !== undefined ? { ...env, XEZ_PR_NUMBER: String(prNumber) } : env;
+  }
+
   private runCheckStep(
     runId: string,
     state: ActiveRun,
@@ -5178,7 +5191,7 @@ export class RunManager {
       // Check steps run in the same cwd as the agent steps — the worktree. Windows: Git Bash only (#963).
       let child: ReturnType<typeof launchCheckStep>;
       try {
-        child = launchCheckStep(command, { cwd: state.cwd, env: process.env });
+        child = launchCheckStep(command, { cwd: state.cwd, env: this.checkStepEnv(runId) });
       } catch (err) {
         if (!(err instanceof CheckShellMissingError)) throw err;
         emit({ type: 'check-output', stepId: step.id, command, text: err.message, exitCode: -1 });
