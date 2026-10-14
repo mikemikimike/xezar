@@ -27,10 +27,16 @@ const emit = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
 
 // Testability hook: XEZ_MOCK_ARGS_FILE=<path> appends the argv this mock was
 // spawned with (one JSON array per line), so tests and dry-run proofs can
-// assert exactly what reached the CLI (e.g. `--append-system-prompt …`).
+// assert exactly what reached the CLI (e.g. `--append-system-prompt-file …`).
+// The prompt file is removed when this process exits (#1008), so the hook records
+// what the CLI READ from it: the value after `--append-system-prompt-file` is the
+// file's contents, the flag itself stays as it was sent.
 if (process.env.XEZ_MOCK_ARGS_FILE) {
   try {
-    appendFileSync(process.env.XEZ_MOCK_ARGS_FILE, `${JSON.stringify(process.argv.slice(2))}\n`);
+    const argv = process.argv.slice(2);
+    const fileFlag = argv.indexOf('--append-system-prompt-file');
+    if (fileFlag >= 0 && argv[fileFlag + 1]) argv[fileFlag + 1] = readFileSync(argv[fileFlag + 1], 'utf8');
+    appendFileSync(process.env.XEZ_MOCK_ARGS_FILE, `${JSON.stringify(argv)}\n`);
   } catch {
     // best effort — never break the mock over the hook
   }

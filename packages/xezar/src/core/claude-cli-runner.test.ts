@@ -57,6 +57,21 @@ describe('buildClaudeArgs systemPrompt', () => {
   it('omits the flag entirely when no systemPrompt is set', () => {
     expect(buildClaudeArgs(spec)).not.toContain('--append-system-prompt');
   });
+
+  // #1008: a long role skill on argv pushed the Windows command line past 32,767 characters.
+  it('passes the prompt file instead of the text when one was written', () => {
+    const long = 'x'.repeat(40_000);
+    const args = buildClaudeArgs({ ...spec, systemPrompt: long }, {}, undefined, '/tmp/xez-prompt-a/system-prompt.md');
+    const idx = args.indexOf('--append-system-prompt-file');
+    expect(args[idx + 1]).toBe('/tmp/xez-prompt-a/system-prompt.md');
+    expect(args).not.toContain('--append-system-prompt');
+    expect(args.join(' ').length).toBeLessThan(long.length);
+  });
+
+  it('passes no prompt file when there is no systemPrompt, even if a path is given', () => {
+    const args = buildClaudeArgs(spec, {}, undefined, '/tmp/xez-prompt-a/system-prompt.md');
+    expect(args).not.toContain('--append-system-prompt-file');
+  });
 });
 
 describe('buildClaudeArgs approval gate', () => {

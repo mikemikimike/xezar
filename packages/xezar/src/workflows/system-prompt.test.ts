@@ -120,7 +120,7 @@ describe('skill-aware task naming (#432)', () => {
 /**
  * End-to-end through the real engine with XEZ_DRY_RUN=1: the config default
  * and the per-run override must reach the claude CLI's argv verbatim
- * (`--append-system-prompt`, captured via the mock's XEZ_MOCK_ARGS_FILE hook)
+ * (`--append-system-prompt-file`, read back by the mock's XEZ_MOCK_ARGS_FILE hook)
  * and be echoed on the RunRecord.
  */
 describe('systemPrompt end-to-end (dry run)', () => {
@@ -239,7 +239,7 @@ describe('systemPrompt end-to-end (dry run)', () => {
     const lines = readFileSync(argsFile, 'utf8').trim().split('\n');
     expect(lines.length).toBeGreaterThan(index);
     const argv = JSON.parse(lines[index] as string) as string[];
-    const idx = argv.indexOf('--append-system-prompt');
+    const idx = argv.indexOf('--append-system-prompt-file');
     expect(idx).toBeGreaterThanOrEqual(0);
     return argv[idx + 1] as string;
   }
@@ -563,7 +563,7 @@ describe('the global follow-up gate (dry run)', () => {
   const capturedSystemPrompt = (index = 0): string => {
     const lines = readFileSync(argsFile, 'utf8').trim().split('\n');
     const argv = JSON.parse(lines[index] as string) as string[];
-    return argv[argv.indexOf('--append-system-prompt') + 1] as string;
+    return argv[argv.indexOf('--append-system-prompt-file') + 1] as string;
   };
 
   it('without XEZ_FOLLOWUPS the agent is never told about the inbox', async () => {

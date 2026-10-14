@@ -19,6 +19,7 @@ import { launch } from '../platform/process-launch.ts';
 import { stopChildTree } from '../platform/process-tree.ts';
 import { buildChildEnv } from './agent-env.ts';
 import { claudeMcpIsolation, runMcpIsolationNote, type ClaudeMcpIsolation } from './run-mcp-isolation.ts';
+import { writeSystemPromptFile } from './system-prompt-file.ts';
 import { costWeightedTokens, type RawUsage } from './usage.ts';
 import { readNdjson } from './ndjson.ts';
 import {
@@ -120,7 +121,8 @@ export class ClaudeCliRunner implements AgentRunner {
     const isolation = claudeMcpIsolation(spec.cwd);
     const isolationNote = runMcpIsolationNote('claude', isolation);
     if (isolationNote) onEvent?.({ type: 'note', message: isolationNote });
-    const args = buildClaudeArgs(spec, process.env, isolation);
+    const promptFile = spec.systemPrompt ? writeSystemPromptFile(spec.systemPrompt) : null;
+    const args = buildClaudeArgs(spec, process.env, isolation, promptFile?.path);
 
     let child: ChildProcessWithoutNullStreams;
     try {
@@ -129,7 +131,14 @@ export class ClaudeCliRunner implements AgentRunner {
         env: buildChildEnv({ backend: this.backend, extraEnv: spec.env }),
       });
     } catch (err) {
+      promptFile?.cleanup();
       throw wrapSpawnError(err, this.bin);
+    }
+    // The file only has to outlive the child. A spawn that never starts emits `error`+`close` and
+    // no `exit`, so both are wired; `cleanup` is idempotent.
+    if (promptFile) {
+      child.once('exit', promptFile.cleanup);
+      child.once('close', promptFile.cleanup);
     }
 
     let stdinOpen = true;
@@ -393,6 +402,7 @@ export function buildClaudeArgs(
   spec: AgentRunSpec,
   env: NodeJS.ProcessEnv = process.env,
   isolation: ClaudeMcpIsolation = claudeMcpIsolation(spec.cwd),
+  systemPromptFile?: string,
 ): string[] {
   const args: string[] = [
     '--input-format',
@@ -403,8 +413,11 @@ export function buildClaudeArgs(
     '--permission-mode',
     env.XEZ_APPROVAL_GATE === '1' ? 'acceptEdits' : 'dontAsk',
   ];
+  // #1008: the file, not the text, whenever there is one – a long role skill on argv pushed the
+  // Windows command line past its 32,767-character limit and the step died at spawn.
   if (spec.systemPrompt) {
-    args.push('--append-system-prompt', spec.systemPrompt);
+    if (systemPromptFile) args.push('--append-system-prompt-file', systemPromptFile);
+    else args.push('--append-system-prompt', spec.systemPrompt);
   }
   // Pin the session so the user can `claude --resume <sessionId>` in the repo
   // to take over interactively after a run. With `resume` we reopen the

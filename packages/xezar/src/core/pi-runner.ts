@@ -16,6 +16,7 @@ import { launch } from '../platform/process-launch.js';
 import { stopChildTree } from '../platform/process-tree.js';
 import { buildChildEnv } from './agent-env.js';
 import { piMcpIsolation, runMcpIsolationNote, writeMcpOverlay } from './run-mcp-isolation.js';
+import { writeSystemPromptFile } from './system-prompt-file.js';
 import { readNdjson } from './ndjson.js';
 import { answerPiDialog, cancelPiDialog, denyPiDialog, readPiDialog, type PiDialog } from './pi-dialog.js';
 import { createPiUiState, mapPiRpcMessage, piTurnStarted } from './pi-ui-mapper.js';
@@ -399,15 +400,25 @@ export class PiRunner implements AgentRunner {
     restart: (() => AgentSession | null) | null,
     onRestartWindowClosed?: () => void,
   ): AgentSession {
-    const child = launch(this.bin, buildPiArgs(spec, mcpOverlay?.path), {
-      cwd: spec.cwd,
-      env: childEnv,
-    });
-    // The overlay only has to outlive the child. Both events are wired because a spawn that
-    // never starts emits `error`+`close` and no `exit`; `cleanup` is idempotent.
-    if (mcpOverlay) {
-      child.once('exit', mcpOverlay.cleanup);
-      child.once('close', mcpOverlay.cleanup);
+    // #1008: one prompt file per child – a restart spawns a new child, and the old file goes with
+    // the old one.
+    const promptFile = spec.systemPrompt ? writeSystemPromptFile(spec.systemPrompt) : null;
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = launch(this.bin, buildPiArgs(spec, mcpOverlay?.path, promptFile?.path), {
+        cwd: spec.cwd,
+        env: childEnv,
+      });
+    } catch (error) {
+      promptFile?.cleanup();
+      throw error;
+    }
+    // The overlay and the prompt file only have to outlive the child. Both events are wired
+    // because a spawn that never starts emits `error`+`close` and no `exit`; `cleanup` is idempotent.
+    for (const file of [mcpOverlay, promptFile]) {
+      if (!file) continue;
+      child.once('exit', file.cleanup);
+      child.once('close', file.cleanup);
     }
     let open = true;
     let settled = true;
@@ -850,11 +861,13 @@ export class PiRunner implements AgentRunner {
  * that file forward plus a `disabled: true` marker for xezar's own bridge. It is optional so the
  * pure argv shape stays testable without a temp file; `startSession` always supplies it.
  */
-export function buildPiArgs(spec: AgentRunSpec, mcpOverlayPath?: string): string[] {
+export function buildPiArgs(spec: AgentRunSpec, mcpOverlayPath?: string, systemPromptFile?: string): string[] {
   const args = ['--mode', 'rpc'];
   if (mcpOverlayPath) args.push('--mcp-config', mcpOverlayPath);
   if (spec.sessionId) args.push(spec.resume ? '--session' : '--session-id', spec.sessionId);
-  if (spec.systemPrompt) args.push('--append-system-prompt', spec.systemPrompt);
+  // #1008: pi reads the file's contents when the value is an existing path (`resolvePromptInput`),
+  // so the prompt's length never reaches the command line, which Windows caps at 32,767 characters.
+  if (spec.systemPrompt) args.push('--append-system-prompt', systemPromptFile ?? spec.systemPrompt);
   if (spec.model) args.push('--model', spec.model);
   const tools = piTools(spec.allowedTools ?? [], spec.bashAllowlist);
   if (tools.length > 0) args.push('--tools', tools.join(','));
