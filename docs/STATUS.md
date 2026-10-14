@@ -1,7 +1,7 @@
 # Status
 
 Maintainer-facing notes on known gaps and unfinished migrations. The standing rules stay in the
-`AGENTS.md` files; this page only records how far each piece of work has got. As of 2026-10-10.
+`AGENTS.md` files; this page only records how far each piece of work has got. As of 2026-10-14.
 
 ## Stopping children's programs when `serve` exits on Linux and macOS
 
@@ -29,7 +29,8 @@ exception.
 
 ## Request schemas moving to `packages/contract`
 
-Tracked in [#677](https://github.com/qodeca/xezar/issues/677).
+[#677](https://github.com/qodeca/xezar/issues/677) closed after wave 1; the remaining schemas have
+no issue yet.
 
 Most request schemas have not moved yet: roughly forty are still declared in
 `packages/xezar/src/server/server.ts`. The two settings routes moved first (wave 1):

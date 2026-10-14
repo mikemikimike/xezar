@@ -43,7 +43,7 @@ body:
     id: os
     attributes:
       label: Operating system
-      placeholder: macOS 15.5, Ubuntu 24.04, Windows 11 + WSL2, ...
+      placeholder: macOS 15.5, Ubuntu 24.04, Windows 11 (native or WSL2), ...
     validations:
       required: true
   - type: input
