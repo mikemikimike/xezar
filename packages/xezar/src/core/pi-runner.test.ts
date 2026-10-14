@@ -292,6 +292,17 @@ describe('pi RPC argv', () => {
     ]);
   });
 
+  // #1008: pi reads the file when the value is an existing path, so the text stays off argv.
+  it('passes the prompt file path instead of the text when one was written', () => {
+    const long = 'x'.repeat(40_000);
+    expect(buildPiArgs({ cwd: '/repo', userPrompt: 'task', systemPrompt: long }, undefined, '/tmp/xez-prompt-a/system-prompt.md')).toEqual([
+      '--mode',
+      'rpc',
+      '--append-system-prompt',
+      '/tmp/xez-prompt-a/system-prompt.md',
+    ]);
+  });
+
   it('does not add the worktree guard for an in-place or non-git run', () => {
     const args = buildPiArgs({ cwd: '/repo', userPrompt: 'task', additionalDirectories: ['/repo/.local/xezar/runs'] });
     expect(args).not.toContain('--extension');
