@@ -37,6 +37,13 @@ export interface IdentifiedProcess {
   startedAt: number;
 }
 
+/** The file form of a ledger (#982): `[pid, startedAt, lastSeenAt]` rows and `[pgid, leaderStartedAt]` groups. */
+export interface LedgerSnapshot {
+  v: 1;
+  seen: Array<[number, number, number]>;
+  groups: Array<[number, number]>;
+}
+
 interface Seen {
   startedAt: number;
   /** The start of the last read that showed this process alive. */
@@ -99,6 +106,41 @@ export class RunProcessLedger {
   /** Test seam: did a read record this pid? */
   has(pid: number): boolean {
     return this.seen.has(pid);
+  }
+
+  /**
+   * What the ledger proves, for a file (#982): the recorded processes and Git Bash groups. The
+   * root pin is left out – after a restart only what was recorded counts, never a pid to watch.
+   */
+  snapshot(): LedgerSnapshot {
+    return {
+      v: 1,
+      seen: [...this.seen].map(([pid, entry]) => [pid, entry.startedAt, entry.lastSeenAt]),
+      groups: [...this.groups],
+    };
+  }
+
+  /**
+   * A ledger from `snapshot()`'s output, or null for anything else. Read back after a crash
+   * (#982); the same identity rules then decide, so a pid now held by a later process counts for
+   * nothing. Bounded like a live ledger.
+   */
+  static restore(value: unknown): RunProcessLedger | null {
+    if (typeof value !== 'object' || value === null) return null;
+    const { v, seen, groups } = value as Partial<Record<keyof LedgerSnapshot, unknown>>;
+    if (v !== 1 || !Array.isArray(seen) || !Array.isArray(groups)) return null;
+    const count = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+    const ledger = new RunProcessLedger();
+    for (const entry of seen.slice(0, LEDGER_MAX_ENTRIES)) {
+      if (!Array.isArray(entry) || entry.length !== 3 || !entry.every(count)) return null;
+      const [pid, startedAt, lastSeenAt] = entry as [number, number, number];
+      ledger.seen.set(pid, { startedAt, lastSeenAt });
+    }
+    for (const entry of groups.slice(0, LEDGER_MAX_GROUPS)) {
+      if (!Array.isArray(entry) || entry.length !== 2 || !entry.every(count)) return null;
+      ledger.groups.set(entry[0] as number, entry[1] as number);
+    }
+    return ledger;
   }
 
   /**

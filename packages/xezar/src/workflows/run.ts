@@ -392,7 +392,7 @@ interface ActiveRun {
   /** Why xezar is stopping this run (#943), set beside `cancelled` by `cancel()` and beside
    *  `memoryLimitPause` by `enforceMemoryLimit`. `dropActive` reads it to sweep what the run
    *  started; a run that ends on its own has none, and its processes are left alone. */
-  stopReason?: SweepReason;
+  stopReason?: Exclude<SweepReason, 'restart'>;
 }
 
 /** Safety cap on autonomous auto-continues per run — stops a stuck agent from nudging forever.
@@ -1036,6 +1036,8 @@ export class RunManager {
     const sweeperHooks: RunProcessSweeperOptions = {
       report: (runId, text) => this.store.appendEvent(runId, { type: 'note', message: text }),
       track: (sweep) => this.trackRun(sweep),
+      // #982: beside the run's own files, so an engine started after a crash can sweep its leftovers.
+      ledgerDir: join(this.dataDir, 'runs'),
     };
     this.runProcesses = options.runProcesses?.(sweeperHooks) ?? new RunProcessSweeper(sweeperHooks);
     // `.catch()` for the same reason `enforceRetention` carries one: a floated promise that
@@ -1801,6 +1803,8 @@ export class RunManager {
     // Startup is the one moment we know which runs are still live, so sweep every other
     // per-run directory here — bounded to `<dataDir>/tmp`, never a sibling.
     sweepAgentTmpDirs(this.dataDir, live.map((r) => r.id));
+    // #982: only a `running` run left a turn behind; every other saved process list is stale.
+    this.runProcesses.forgetSavedExcept(live.filter((r) => r.status === 'running').map((r) => r.id));
     for (const run of live) {
       if (run.status === 'queued') {
         await this.reviveQueuedRun(run, 'xezar restarted');
@@ -1833,6 +1837,9 @@ export class RunManager {
         finishedAt,
         currentStepId: undefined,
       });
+      // #982: the previous engine died mid-turn, so nothing stopped what that turn started. Sweep
+      // it first; the Continue below waits for this pending sweep before it starts anything.
+      void this.runProcesses.recover(run.id);
       const resumed = this.continueRun(
         run.id,
         {

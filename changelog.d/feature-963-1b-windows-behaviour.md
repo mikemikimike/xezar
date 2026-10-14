@@ -1,6 +1,6 @@
-## 🔧 Changed
+## 💥 Breaking
 
-- 🔧 **Windows: workflow check steps run in Git Bash, never in WSL.** A check step used to run the
+- 💥 **Windows: workflow check steps run in Git Bash, never in WSL.** A check step used to run the
   first `bash.exe` on PATH, which on a stock install is WSL's. It now runs Git for Windows' own
   bash with a plain `-c` (no login shell, so PATH and the temp folder stay Windows'), and a missing
   Git Bash fails the step with a message naming Git for Windows. Linux and macOS keep `bash -lc`.

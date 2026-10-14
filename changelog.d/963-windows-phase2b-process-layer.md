@@ -19,8 +19,7 @@
   window.** Each one saves xezar's state and stops the programs it started, within a few seconds,
   and tasks that were running carry on when xezar starts again, as on Linux and macOS. Closing the
   window gives xezar only about 5 seconds, which on a busy machine may not be enough to stop
-  everything, so prefer Ctrl+C or Ctrl+Break. Before,
-  Ctrl+Break and closing the window ended xezar without saving. `xezar lease gates` also passes
+  everything, so prefer Ctrl+C or Ctrl+Break. Before, Ctrl+Break and closing the window ended xezar without saving. `xezar lease gates` also passes
   Ctrl+Break and a closing window on to the command it runs. (#963)
 - ✨ **A task paused for its memory limit, cancelled or stopped at its time limit now also stops the
   background programs it started, such as dev servers, and names them in the task.** xezar stops only
