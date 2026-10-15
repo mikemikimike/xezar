@@ -324,6 +324,30 @@ describe('pi RPC argv', () => {
     ).toEqual(['--mode', 'rpc', '--tools', 'read,grep,find,bash']);
   });
 
+  it('maps MCP allowlist names to pi-mcp-adapter 2.32.1 direct-tool names', () => {
+    expect(
+      buildPiArgs({
+        cwd: '/repo',
+        userPrompt: 'task',
+        allowedTools: ['Read', 'mcp__chrome-devtools__navigate_page', 'mcp__chrome-devtools__takeScreenshot'],
+      }),
+    ).toEqual([
+      '--mode',
+      'rpc',
+      '--tools',
+      'read,chrome-devtools_navigate_page,chrome-devtools_takeScreenshot',
+    ]);
+  });
+
+  it('maps an allowed MCP server proxy to pi-mcp-adapter namespace-proxy spelling', () => {
+    expect(buildPiArgs({ cwd: '/repo', userPrompt: 'task', allowedTools: ['mcp__chrome-devtools'] })).toEqual([
+      '--mode',
+      'rpc',
+      '--tools',
+      'mcp__chrome_devtools',
+    ]);
+  });
+
   it('keeps bash and hands a bashAllowlist to the guard extension, with no worktree (#856)', () => {
     const args = buildPiArgs({
       cwd: '/repo',

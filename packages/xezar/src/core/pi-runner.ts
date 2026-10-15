@@ -278,6 +278,9 @@ export class PiRunner implements AgentRunner {
       // the env the child actually spawns with is what must resolve the agent home — not the host
       // default — and `spec.cwd` is the folder whose own `.pi` the child will read.
       const childEnv = buildChildEnv({ backend: this.backend, extraEnv: spec.env });
+      if (spec.allowedTools !== undefined) {
+        childEnv.MCP_DIRECT_TOOLS = piMcpDirectToolSelectors(spec.allowedTools);
+      }
       let answer: PiMcpConfigAnswer = 'unknown';
       try {
         answer = await this.supportsMcpConfig(this.bin, childEnv, spec.cwd, undefined, probeCancel.signal);
@@ -921,9 +924,54 @@ function piTools(tools: string[], bashAllowlist?: string[]): string[] {
         // closed as Claude Code does (`buildAllowedTools` emits no Bash rule for it): bash is
         // removed, and the guard is still told `[]`, which refuses every shell command.
         .filter((tool) => tool !== 'Bash' || bashAllowlist === undefined || bashAllowlistEntries(bashAllowlist).length > 0)
-        .map((tool) => map[tool] ?? tool.toLowerCase()),
+        .map((tool) => map[tool] ?? piMcpToolName(tool) ?? tool.toLowerCase()),
     ),
   ];
+}
+
+function piMcpDirectToolSelectors(tools: readonly string[]): string {
+  const selectors = new Set<string>();
+  for (const tool of tools) {
+    const match = /^mcp__(.+?)__(.+)$/.exec(tool);
+    if (!match?.[1] || !match[2]) continue;
+    const serverName = match[1];
+    const toolName = match[2];
+    // The adapter splits this value on commas and slashes and does not support escaping.
+    if (
+      /[,/]/.test(serverName) ||
+      /[,/]/.test(toolName) ||
+      serverName.trim() !== serverName ||
+      toolName.trim() !== toolName ||
+      toolName.includes('__')
+    ) continue;
+    selectors.add(`${serverName}/${toolName}`);
+  }
+  return selectors.size > 0 ? [...selectors].join(',') : '__none__';
+}
+
+function piMcpToolName(tool: string): string | undefined {
+  if (!tool.startsWith('mcp__')) return undefined;
+  const reference = tool.slice('mcp__'.length);
+  const separator = reference.indexOf('__');
+  if (separator === -1) return piMcpNamespaceProxyName(reference);
+
+  const serverName = reference.slice(0, separator);
+  const mcpToolName = reference.slice(separator + 2);
+  if (!serverName || !mcpToolName) return undefined;
+
+  // pi-mcp-adapter 2.32.1's default `server` prefix preserves letters, digits, `_`, and `-`.
+  const serverPrefix = Array.from(serverName, (character) =>
+    /^[A-Za-z0-9_-]$/.test(character) ? character : `_${character.codePointAt(0)!.toString(16)}_`,
+  ).join('');
+  return `${serverPrefix}_${mcpToolName.replace(/\./g, '_')}`;
+}
+
+function piMcpNamespaceProxyName(serverName: string): string {
+  const normalized = serverName.replace(/-/g, '_');
+  const namespace = /^[A-Za-z0-9_]+$/.test(normalized) && !normalized.startsWith('_mcpns_')
+    ? normalized
+    : `_mcpns_${Array.from(normalized, (character) => character.codePointAt(0)!.toString(16)).join('_')}`;
+  return `mcp__${namespace}`;
 }
 
 function toPiPrompt(content: ContentBlock[]): {

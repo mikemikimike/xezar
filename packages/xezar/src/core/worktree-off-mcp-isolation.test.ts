@@ -255,11 +255,13 @@ describe('pi only passes --mcp-config when the pi MCP extension is installed (#5
     exit: (n: number) => { code: number; stderr?: string } = () => ({ code: 0 }),
     specEnv: Record<string, string> = { PI_CODING_AGENT_DIR: join(root, 'pi-home') },
     cwd: string = root,
-  ): Promise<{ argv: string[][]; overlay: string | undefined; notes: string[] }> {
+    allowedTools?: string[],
+  ): Promise<{ argv: string[][]; childEnv: NodeJS.ProcessEnv | undefined; overlay: string | undefined; notes: string[] }> {
     write('.pi/mcp.json', { mcpServers: { xezar: BRIDGE, docs: PROJECT_SERVER } });
     write('pi-home/mcp.json', { mcpServers: { personal: { command: 'node' } } });
 
     const argv: string[][] = [];
+    let childEnv: NodeJS.ProcessEnv | undefined;
     let overlay: string | undefined;
     let spawns = 0;
     const settle = (fake: ReturnType<typeof fakePiChild>, at: number): void => {
@@ -270,13 +272,14 @@ describe('pi only passes --mcp-config when the pi MCP extension is installed (#5
       fake.child.emit('exit', how.code, null);
       fake.child.emit('close', how.code, null);
     };
-    spawnHook.override = (_bin: unknown, args: unknown) => {
+    spawnHook.override = (_bin: unknown, args: unknown, options: unknown) => {
       const these = args as string[];
       // The capability probe spawns too. Hand it a child that never settles — that is the
       // "never exits" case, and its own bound is what has to end it — and never count it as
       // a session spawn.
       if (these[0] === '--help') return fakePiChild().child;
       argv.push(these);
+      childEnv = (options as { env?: NodeJS.ProcessEnv }).env;
       const at = these.indexOf('--mcp-config');
       // Read it here: the overlay is removed as soon as the child settles.
       if (at >= 0) overlay = readFileSync(these[at + 1] as string, 'utf8');
@@ -290,7 +293,7 @@ describe('pi only passes --mcp-config when the pi MCP extension is installed (#5
     const notes: string[] = [];
     try {
       const session = new PiRunner({ bin: 'pi', timeoutMs: 0, supportsMcpConfig: probe }).startSession(
-        { userPrompt: 'do it', cwd, env: specEnv },
+        { userPrompt: 'do it', cwd, env: specEnv, ...(allowedTools !== undefined ? { allowedTools } : {}) },
         (event: AgentEvent) => {
           if (event.type === 'note') notes.push(event.message);
         },
@@ -300,7 +303,7 @@ describe('pi only passes --mcp-config when the pi MCP extension is installed (#5
       spawnHook.override = null;
     }
 
-    return { argv, overlay, notes };
+    return { argv, childEnv, overlay, notes };
   }
 
   it('extension absent: no --mcp-config in the argv, and one note says the extension is not there', async () => {
@@ -325,6 +328,54 @@ describe('pi only passes --mcp-config when the pi MCP extension is installed (#5
     expect(written.mcpServers.personal).toEqual({ command: 'node' });
     expect(notes.some((note) => note.includes('does not load xezar'))).toBe(true);
     expect(notes.some((note) => note.includes('MCP adapter extension is not available'))).toBe(false);
+  });
+
+  it('only enables direct MCP tools for servers named in the step allowlist', async () => {
+    write('.mcp.json', { mcpServers: { 'chrome-devtools': { ...PROJECT_SERVER, directTools: false } } });
+
+    const { argv, childEnv, overlay } = await piSpawn(async () => 'yes', undefined, undefined, root, [
+      'Read',
+      'mcp__chrome-devtools__navigate_page',
+    ]);
+
+    const written = JSON.parse(overlay ?? '{}') as {
+      mcpServers: Record<string, Record<string, unknown>>;
+    };
+    expect(written.mcpServers['chrome-devtools']).toBeUndefined();
+    expect(JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8')).mcpServers['chrome-devtools'].directTools).toBe(false);
+    expect(written.mcpServers.xezar).toEqual({ disabled: true });
+    expect(written.mcpServers.personal).toEqual({ command: 'node' });
+    expect(written.mcpServers.docs).toBeUndefined();
+    expect(argv[0]).toContain('--tools');
+    expect(argv[0]?.[argv[0]!.indexOf('--tools') + 1]).toBe('read,chrome-devtools_navigate_page');
+    expect(childEnv?.MCP_DIRECT_TOOLS).toBe('chrome-devtools/navigate_page');
+  });
+
+  it('does not enable direct MCP registration when a step allows only pi built-ins', async () => {
+    write('.mcp.json', { mcpServers: { 'chrome-devtools': PROJECT_SERVER } });
+
+    const { argv, childEnv, overlay } = await piSpawn(async () => 'yes', undefined, undefined, root, ['Read']);
+
+    const written = JSON.parse(overlay ?? '{}') as { mcpServers: Record<string, Record<string, unknown>> };
+    expect(written.mcpServers['chrome-devtools']).toBeUndefined();
+    expect(argv[0]?.[argv[0]!.indexOf('--tools') + 1]).toBe('read');
+    expect(childEnv?.MCP_DIRECT_TOOLS).toBe('__none__');
+  });
+
+  it('does not widen direct MCP selection when an allowlist name cannot round-trip', async () => {
+    write('.mcp.json', { mcpServers: { 'chrome-devtools': PROJECT_SERVER, other: PROJECT_SERVER } });
+
+    const { childEnv } = await piSpawn(async () => 'yes', undefined, undefined, root, [
+      'Read',
+      'mcp__chrome-devtools__navigate_page',
+      'mcp__chrome-devtools,other__takeScreenshot',
+      'mcp__chrome-devtools__take/screenshot',
+      'mcp__chrome-devtools__take__screenshot',
+      'mcp__ chrome-devtools__takeScreenshot',
+      'mcp__chrome-devtools__takeScreenshot ',
+    ]);
+
+    expect(childEnv?.MCP_DIRECT_TOOLS).toBe('chrome-devtools/navigate_page');
   });
 
   // ---- round 1, M-A: the answer has to be about the CHILD's folder and environment ----
